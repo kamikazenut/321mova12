@@ -135,14 +135,14 @@ export const getTvShowPlayers = (
   startAt?: number,
 ): PlayersProps[] => {
   return [
-    {
-      title: "FMoviez",
-      source: `/api/player/fmoviez-proxy?type=tv&id=${id}&season=${season}&episode=${episode}${startAt ? `&startAt=${startAt}` : ""}`,
-      recommended: true,
-      fast: true,
-      ads: true,
-      resumable: true,
-    },
+    //{
+      //title: "FMoviez",
+      //source: `/api/player/fmoviez-proxy?type=tv&id=${id}&season=${season}&episode=${episode}${startAt ? `&startAt=${startAt}` : ""}`,
+      //recommended: true,
+      //fast: true,
+      //ads: true,
+      //resumable: true,
+    //},
     {
       title: "VidLink",
       source: `https://vidlink.pro/tv/${id}/${season}/${episode}?player=jw&primaryColor=f5a524&secondaryColor=a2a2a2&iconColor=eefdec&autoplay=false&startAt=${startAt || ""}`,
