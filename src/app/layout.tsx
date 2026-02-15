@@ -1,0 +1,114 @@
+import type { Metadata, Viewport } from "next";
+import { siteConfig } from "@/config/site";
+import { Poppins } from "@/utils/fonts";
+import "../styles/globals.css";
+import "../styles/lightbox.css";
+import Providers from "./providers";
+import TopNavbar from "@/components/ui/layout/TopNavbar";
+import BottomNavbar from "@/components/ui/layout/BottomNavbar";
+import Sidebar from "@/components/ui/layout/Sidebar";
+import { SpeedInsights } from "@vercel/speed-insights/next";
+import { Analytics } from "@vercel/analytics/next";
+import { cn } from "@/utils/helpers";
+import { IS_PRODUCTION, SpacingClasses } from "@/utils/constants";
+import dynamic from "next/dynamic";
+import { NuqsAdapter } from "nuqs/adapters/next/app";
+import { Suspense } from "react";
+
+const Disclaimer = dynamic(() => import("@/components/ui/overlay/Disclaimer"));
+import { env } from "@/utils/env";
+import Script from "next/script";
+
+export const metadata: Metadata = {
+  title: siteConfig.name,
+  applicationName: siteConfig.name,
+  description: siteConfig.description,
+  manifest: "/manifest.json",
+  icons: {
+    icon: siteConfig.favicon,
+  },
+  twitter: {
+    card: "summary",
+    title: {
+      default: siteConfig.name,
+      template: siteConfig.name,
+    },
+    description: siteConfig.description,
+  },
+  openGraph: {
+    type: "website",
+    siteName: siteConfig.name,
+    title: {
+      default: siteConfig.name,
+      template: siteConfig.name,
+    },
+    description: siteConfig.description,
+  },
+  formatDetection: {
+    telephone: false,
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#FFFFFF" },
+    { media: "(prefers-color-scheme: dark)", color: "#0D0C0F" },
+  ],
+};
+
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  return (
+    <html suppressHydrationWarning lang="en">
+      <body className={cn("bg-background min-h-dvh antialiased select-none", Poppins.className)}>
+        <Suspense>
+          <NuqsAdapter>
+            <Providers>
+              {IS_PRODUCTION && <Disclaimer />}
+              <TopNavbar />
+              <Sidebar>
+                <main className={cn("container mx-auto max-w-full", SpacingClasses.main)}>
+                  {children}
+                </main>
+              </Sidebar>
+              <BottomNavbar />
+            </Providers>
+          </NuqsAdapter>
+        </Suspense>
+        <SpeedInsights debug={false} />
+        <Analytics debug={false} />
+
+        {env.NEXT_PUBLIC_GA_MEASUREMENT_ID && (
+          <>
+            <Script
+              src={`https://www.googletagmanager.com/gtag/js?id=${env.NEXT_PUBLIC_GA_MEASUREMENT_ID}`}
+              strategy="afterInteractive"
+            />
+            <Script id="google-analytics" strategy="afterInteractive">
+              {`
+                window.dataLayer = window.dataLayer || [];
+                function gtag(){dataLayer.push(arguments);}
+                gtag('js', new Date());
+                gtag('config', '${env.NEXT_PUBLIC_GA_MEASUREMENT_ID}');
+              `}
+            </Script>
+          </>
+        )}
+
+        {/* Old pop ad script disabled
+        <Script async strategy="afterInteractive" src="//acscdn.com/script/aclib.js" />
+        <Script data-cfasync="false" strategy="lazyOnload" id="adcash">
+          {`
+            aclib.runPop({
+              zoneId: '9033646',
+            });
+          `}
+        </Script>
+        */}
+
+        <Script id="bvtpk-tag" strategy="afterInteractive">
+          {`(function(s){s.dataset.zone='9408521',s.src='https://bvtpk.com/tag.min.js'})([document.documentElement, document.body].filter(Boolean).pop().appendChild(document.createElement('script')));`}
+        </Script>
+      </body>
+    </html>
+  );
+}
