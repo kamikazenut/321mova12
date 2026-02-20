@@ -5,7 +5,7 @@ import type { HistoryDetail } from "@/types/movie";
 import { cn } from "@/utils/helpers";
 import { PlayOutline } from "@/utils/icons";
 import { formatDuration, getImageUrl, timeAgo } from "@/utils/movies";
-import { Chip, Image, Progress } from "@heroui/react";
+import { Chip, Progress } from "@heroui/react";
 import Link from "next/link";
 import { useCallback } from "react";
 
@@ -16,6 +16,7 @@ interface ResumeCardProps {
 const ResumeCard: React.FC<ResumeCardProps> = ({ media }) => {
   const releaseYear = new Date(media.release_date).getFullYear();
   const posterImage = getImageUrl(media.backdrop_path || media.poster_path || "");
+  const fallbackPoster = getImageUrl(undefined, "backdrop");
   const progressValue =
     media.duration > 0
       ? Math.min(100, Math.max(0, (media.last_position / media.duration) * 100))
@@ -86,14 +87,16 @@ const ResumeCard: React.FC<ResumeCardProps> = ({ media }) => {
               <Rating rate={media.vote_average} />
             </div>
           </div>
-          <Image
+          <img
             alt={media.title}
             src={posterImage}
-            radius="none"
-            className="z-0 aspect-video h-[150px] object-cover object-center transition group-hover:scale-110 md:h-[200px]"
-            classNames={{
-              img: "group-hover:opacity-70",
+            loading="lazy"
+            decoding="async"
+            onError={(event) => {
+              if (event.currentTarget.src === fallbackPoster) return;
+              event.currentTarget.src = fallbackPoster;
             }}
+            className="z-0 aspect-video h-[150px] w-full object-cover object-center transition group-hover:scale-110 group-hover:opacity-70 md:h-[200px]"
           />
         </div>
       </Link>

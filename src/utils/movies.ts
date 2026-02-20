@@ -96,7 +96,7 @@ export const timeAgo = (date: Date | string): string => {
  *
  * @example
  * getImageUrl('somepath.jpg', 'backdrop', true)
- * // returns 'http://image.tmdb.org/t/p/original/somepath.jpg'
+ * // returns 'https://image.tmdb.org/t/p/original/somepath.jpg'
  *
  * @example
  * getImageUrl(undefined, 'poster')
@@ -114,7 +114,23 @@ export const getImageUrl = (
       : type === "backdrop"
         ? "https://wallpapercave.com/wp/wp1945939.jpg"
         : "";
-  return path ? `http://image.tmdb.org/t/p/${size}/${path}` : fallback;
+
+  if (!path) return fallback;
+
+  if (/^https?:\/\//i.test(path)) {
+    try {
+      const parsed = new URL(path);
+      if (parsed.hostname.includes("image.tmdb.org") && parsed.protocol !== "https:") {
+        parsed.protocol = "https:";
+      }
+      return parsed.toString();
+    } catch {
+      return path;
+    }
+  }
+
+  const normalizedPath = path.startsWith("/") ? path.slice(1) : path;
+  return `https://image.tmdb.org/t/p/${size}/${normalizedPath}`;
 };
 
 /**
