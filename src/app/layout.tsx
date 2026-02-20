@@ -3,6 +3,7 @@ import { siteConfig } from "@/config/site";
 import { Poppins } from "@/utils/fonts";
 import "../styles/globals.css";
 import "../styles/lightbox.css";
+import "strataplayer/style.css";
 import Providers from "./providers";
 import TopNavbar from "@/components/ui/layout/TopNavbar";
 import BottomNavbar from "@/components/ui/layout/BottomNavbar";
@@ -60,6 +61,48 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html suppressHydrationWarning lang="en">
       <body className={cn("bg-background min-h-dvh antialiased select-none", Poppins.className)}>
+        <Script id="localhost-sw-reset" strategy="beforeInteractive">
+          {`(function () {
+            try {
+              var host = window.location.hostname;
+              var isLocal = host === "localhost" || host === "127.0.0.1";
+              if (!isLocal) return;
+
+              var resetKey = "__LOCAL_SW_RESET_DONE__";
+              if (sessionStorage.getItem(resetKey) === "1") return;
+              sessionStorage.setItem(resetKey, "1");
+
+              var ops = [];
+              if ("serviceWorker" in navigator) {
+                ops.push(
+                  navigator.serviceWorker.getRegistrations().then(function (regs) {
+                    return Promise.all(
+                      regs.map(function (reg) {
+                        return reg.unregister();
+                      }),
+                    );
+                  }),
+                );
+              }
+
+              if ("caches" in window) {
+                ops.push(
+                  caches.keys().then(function (keys) {
+                    return Promise.all(
+                      keys.map(function (key) {
+                        return caches.delete(key);
+                      }),
+                    );
+                  }),
+                );
+              }
+
+              Promise.allSettled(ops).finally(function () {
+                window.location.reload();
+              });
+            } catch (error) {}
+          })();`}
+        </Script>
         <Suspense>
           <NuqsAdapter>
             <Providers>

@@ -36,3 +36,34 @@ npm run dev
 ```
 
 4. Open `http://localhost:3000`.
+
+## Cloudflare Player Proxy (Optional)
+
+If your direct `321 Player` source dies or needs proxying, you can route it through Cloudflare Worker.
+
+1. Deploy worker:
+
+```bash
+cd cloudflare/player-proxy
+npm i -g wrangler
+wrangler login
+cp wrangler.toml.example wrangler.toml
+# edit wrangler.toml vars to your upstream templates
+wrangler deploy
+```
+
+2. Add this to `.env.local` in the app:
+
+```bash
+NEXT_PUBLIC_PLAYER_PROXY_URL=https://YOUR-WORKER.your-subdomain.workers.dev
+```
+
+3. Restart app:
+
+```bash
+npm run dev
+```
+
+Routes expected by app:
+- `GET /playlist/movie/:id`
+- `GET /playlist/tv/:id/:season/:episode`

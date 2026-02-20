@@ -89,6 +89,22 @@ interface FmoviezForwardedPlayerMessage {
   data: unknown;
 }
 
+interface LocalPlayerEventData {
+  event: PlayerEventType;
+  currentTime: number;
+  duration: number;
+  mediaId: string | number;
+  mediaType: ContentType;
+  season?: number;
+  episode?: number;
+  progress?: number;
+}
+
+interface LocalPlayerMessage {
+  type: "LOCAL_PLAYER_EVENT";
+  data: LocalPlayerEventData;
+}
+
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
@@ -106,6 +122,12 @@ const isFmoviezForwardedMessage = (value: unknown): value is FmoviezForwardedPla
   if (!isObject(value)) return false;
 
   return value.type === "FMOVIEZ_PLAYER_EVENT" && typeof value.origin === "string";
+};
+
+const isLocalPlayerMessage = (value: unknown): value is LocalPlayerMessage => {
+  if (!isObject(value)) return false;
+  if (value.type !== "LOCAL_PLAYER_EVENT") return false;
+  return isObject(value.data);
 };
 
 const isEmbedSeekOrigin = (origin: string): boolean => {
@@ -150,6 +172,27 @@ const parseEmbedSeekEvent = (value: unknown): UnifiedPlayerEventData | null => {
     duration: asNumber(data.duration ?? data.totalDuration) ?? 0,
     mediaId: 0,
     mediaType: "movie",
+  };
+};
+
+const parseLocalPlayerEvent = (value: unknown): UnifiedPlayerEventData | null => {
+  if (!isLocalPlayerMessage(value)) return null;
+
+  const data = value.data;
+  const currentTime = asNumber(data.currentTime) ?? 0;
+  const duration = asNumber(data.duration) ?? 0;
+  const mediaId = data.mediaId ?? 0;
+  const mediaType = data.mediaType === "tv" || data.mediaType === "movie" ? data.mediaType : "movie";
+
+  return {
+    event: normalizeEventType(data.event),
+    currentTime,
+    duration,
+    mediaId,
+    mediaType,
+    season: asNumber(data.season) ?? undefined,
+    episode: asNumber(data.episode) ?? undefined,
+    progress: asNumber(data.progress) ?? undefined,
   };
 };
 
@@ -221,7 +264,9 @@ export function usePlayerEvents(options: UsePlayerEventsOptions = {}) {
     const handleMessage = (event: MessageEvent) => {
       let parsed: UnifiedPlayerEventData | null = null;
 
-      if (isFmoviezForwardedMessage(event.data) && isEmbedSeekOrigin(event.data.origin)) {
+      if (isLocalPlayerMessage(event.data)) {
+        parsed = parseLocalPlayerEvent(event.data);
+      } else if (isFmoviezForwardedMessage(event.data) && isEmbedSeekOrigin(event.data.origin)) {
         parsed = parseEmbedSeekEvent(event.data.data);
       } else if (isEmbedSeekOrigin(event.origin)) {
         parsed = parseEmbedSeekEvent(event.data);

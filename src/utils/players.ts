@@ -1,5 +1,27 @@
 import { PlayersProps } from "@/types";
 
+const get321MoviePlaylistUrl = (id: string | number): string => {
+  const params = new URLSearchParams({
+    type: "movie",
+    id: String(id),
+  });
+  return `/api/player/vixsrc-playlist?${params.toString()}`;
+};
+
+const get321TvPlaylistUrl = (
+  id: string | number,
+  season: number,
+  episode: number,
+): string => {
+  const params = new URLSearchParams({
+    type: "tv",
+    id: String(id),
+    season: String(season),
+    episode: String(episode),
+  });
+  return `/api/player/vixsrc-playlist?${params.toString()}`;
+};
+
 /**
  * Generates a list of movie players with their respective titles and source URLs.
  * Each player is constructed using the provided movie ID.
@@ -11,6 +33,15 @@ import { PlayersProps } from "@/types";
  */
 export const getMoviePlayers = (id: string | number, startAt?: number): PlayersProps[] => {
   return [
+    {
+      title: "321 Player",
+      source: get321MoviePlaylistUrl(id),
+      mode: "playlist_json",
+      recommended: true,
+      fast: true,
+      ads: false,
+      resumable: true,
+    },
     //{
    //   title: "FMoviez",
    //   source: `/api/player/fmoviez-proxy?type=movie&id=${id}${startAt ? `&startAt=${startAt}` : ""}`,
@@ -135,6 +166,15 @@ export const getTvShowPlayers = (
   startAt?: number,
 ): PlayersProps[] => {
   return [
+    {
+      title: "321 Player",
+      source: get321TvPlaylistUrl(id, season, episode),
+      mode: "playlist_json",
+      recommended: true,
+      fast: true,
+      ads: false,
+      resumable: true,
+    },
     //{
       //title: "FMoviez",
       //source: `/api/player/fmoviez-proxy?type=tv&id=${id}&season=${season}&episode=${episode}${startAt ? `&startAt=${startAt}` : ""}`,

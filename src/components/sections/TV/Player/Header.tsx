@@ -1,5 +1,5 @@
 import { cn } from "@/utils/helpers";
-import { ArrowLeft, List, Next, Prev, Server } from "@/utils/icons";
+import { ArrowLeft, Grid, List, Next, Prev, Server } from "@/utils/icons";
 import ActionButton from "./ActionButton";
 import { TvShowPlayerProps } from "./Player";
 
@@ -8,6 +8,8 @@ interface TvShowPlayerHeaderProps extends Omit<TvShowPlayerProps, "episodes" | "
   selectedSource: number;
   onOpenSource: () => void;
   onOpenEpisode: () => void;
+  onOpenServer?: () => void;
+  showServerButton?: boolean;
 }
 
 const TvShowPlayerHeader: React.FC<TvShowPlayerHeaderProps> = ({
@@ -21,18 +23,23 @@ const TvShowPlayerHeader: React.FC<TvShowPlayerHeaderProps> = ({
   prevEpisodeNumber,
   onOpenSource,
   onOpenEpisode,
+  onOpenServer,
+  showServerButton = false,
 }) => {
   return (
     <div
       aria-hidden={hidden ? true : undefined}
       className={cn(
-        "absolute top-0 z-40 flex h-28 w-full items-start justify-between gap-4",
-        "bg-linear-to-b from-black/80 to-transparent p-2 text-white transition-opacity md:p-4",
-        { "opacity-0": hidden },
+        "absolute top-0 z-[10050] flex h-24 w-full items-start justify-between gap-2 max-[360px]:h-20 sm:h-28 sm:gap-4",
+        "bg-linear-to-b from-black/80 to-transparent p-1.5 text-white transition-opacity max-[360px]:p-1 sm:p-2 md:p-4",
+        {
+          "opacity-0 pointer-events-none": hidden,
+          "opacity-100 pointer-events-auto": !hidden,
+        },
       )}
     >
       <ActionButton label="Back" href={`/tv/${id}`}>
-        <ArrowLeft size={42} />
+        <ArrowLeft className="size-8 max-[360px]:size-7 sm:size-10" />
       </ActionButton>
       <div className="absolute left-1/2 hidden -translate-x-1/2 flex-col justify-center text-center sm:flex">
         <p className="text-sm text-white text-shadow-lg sm:text-lg lg:text-xl">{seriesName}</p>
@@ -40,14 +47,14 @@ const TvShowPlayerHeader: React.FC<TvShowPlayerHeaderProps> = ({
           {seasonName} - {episode.name}
         </p>
       </div>
-      <div className="flex items-center gap-4">
+      <div className="flex max-w-[72vw] items-center gap-2 overflow-x-auto sm:max-w-none sm:gap-3 md:gap-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
         <ActionButton
           disabled={!prevEpisodeNumber}
           label="Previous Episode"
           tooltip="Previous Episode"
           href={`/tv/${id}/${episode.season_number}/${prevEpisodeNumber}/player?src=${selectedSource}`}
         >
-          <Prev size={42} />
+          <Prev className="size-8 max-[360px]:size-7 sm:size-10" />
         </ActionButton>
         <ActionButton
           disabled={!nextEpisodeNumber}
@@ -55,13 +62,18 @@ const TvShowPlayerHeader: React.FC<TvShowPlayerHeaderProps> = ({
           tooltip="Next Episode"
           href={`/tv/${id}/${episode.season_number}/${nextEpisodeNumber}/player?src=${selectedSource}`}
         >
-          <Next size={42} />
+          <Next className="size-8 max-[360px]:size-7 sm:size-10" />
         </ActionButton>
         <ActionButton label="Sources" tooltip="Sources" onClick={onOpenSource}>
-          <Server size={34} />
+          <Server className="size-6 max-[360px]:size-5 sm:size-7" />
         </ActionButton>
+        {showServerButton && onOpenServer ? (
+          <ActionButton label="Servers" tooltip="Servers" onClick={onOpenServer}>
+            <Grid className="size-6 max-[360px]:size-5 sm:size-7" />
+          </ActionButton>
+        ) : null}
         <ActionButton label="Episodes" tooltip="Episodes" onClick={onOpenEpisode}>
-          <List size={34} />
+          <List className="size-6 max-[360px]:size-5 sm:size-7" />
         </ActionButton>
       </div>
     </div>

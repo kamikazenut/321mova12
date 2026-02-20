@@ -25,10 +25,14 @@ const ActionButton: React.FC<ActionButtonProps> = ({
         aria-label={label}
         onClick={onClick}
         disabled={disabled}
-        className={cn("group drop-shadow-md [&>svg]:transition-all", {
+        className={cn(
+          "group flex h-10 w-10 items-center justify-center rounded-md drop-shadow-md transition-colors",
+          "max-[360px]:h-9 max-[360px]:w-9 [&>svg]:h-7 [&>svg]:w-7 max-[360px]:[&>svg]:h-6 max-[360px]:[&>svg]:w-6 [&>svg]:transition-all",
+          {
           "hover:[&>svg]:scale-125 [&>svg]:hover:text-warning": !disabled,
           "cursor-not-allowed opacity-50": disabled,
-        })}
+          },
+        )}
       >
         {children}
       </button>

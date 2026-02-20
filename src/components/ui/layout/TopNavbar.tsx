@@ -59,20 +59,22 @@ const TopNavbar = () => {
           </NavbarItem>
         </NavbarContent>
       )}
-      <NavbarContent justify="end">
-        <NavbarItem className="flex gap-1">
+      <NavbarContent justify="end" className="min-w-0">
+        <NavbarItem className="flex gap-1 max-[380px]:gap-0.5">
           <ThemeSwitchDropdown />
           <IconButton
             tooltip="Discord"
             tooltipProps={{ placement: "left" }}
-            className="p-2"
+            className="p-2 max-[380px]:hidden"
             variant="light"
             icon={<FaDiscord className="size-full" />}
             href="https://discord.gg/7tBsApQUnF"
             target="_blank"
             rel="noopener noreferrer"
           />
-          <FullscreenToggleButton />
+          <div className="max-[340px]:hidden">
+            <FullscreenToggleButton />
+          </div>
           <UserProfileButton />
         </NavbarItem>
       </NavbarContent>

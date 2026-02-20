@@ -7,6 +7,8 @@ import { IoIosSunny } from "react-icons/io";
 import {
   IoCompass,
   IoCompassOutline,
+  IoFootball,
+  IoFootballOutline,
   IoInformationCircle,
   IoInformationCircleOutline,
   IoMoon,
@@ -35,6 +37,12 @@ export const siteConfig: SiteConfigType = {
       href: "/search",
       icon: <BiSearchAlt2 className="size-full" />,
       activeIcon: <BiSolidSearchAlt2 className="size-full" />,
+    },
+    {
+      label: "Sports",
+      href: "/sports",
+      icon: <IoFootballOutline className="size-full" />,
+      activeIcon: <IoFootball className="size-full" />,
     },
     {
       label: "Library",

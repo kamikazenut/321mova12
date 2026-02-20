@@ -61,6 +61,7 @@ export type SiteConfigType = {
 export type PlayersProps = {
   title: string;
   source: string;
+  mode?: "embed" | "playlist_json";
   recommended?: boolean;
   fast?: boolean;
   ads?: boolean;
