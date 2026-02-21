@@ -26,7 +26,7 @@ const ActionButton: React.FC<ActionButtonProps> = ({
         onClick={onClick}
         disabled={disabled}
         className={cn(
-          "group flex h-10 w-10 items-center justify-center rounded-md drop-shadow-md transition-colors",
+          "group pointer-events-auto flex h-10 w-10 items-center justify-center rounded-md drop-shadow-md transition-colors",
           "max-[360px]:h-9 max-[360px]:w-9 [&>svg]:h-7 [&>svg]:w-7 max-[360px]:[&>svg]:h-6 max-[360px]:[&>svg]:w-6 [&>svg]:transition-all",
           {
           "hover:[&>svg]:scale-125 [&>svg]:hover:text-warning": !disabled,
@@ -40,7 +40,7 @@ const ActionButton: React.FC<ActionButtonProps> = ({
   );
 
   return href ? (
-    <Link href={href} className="flex items-center">
+    <Link href={href} className="pointer-events-auto flex items-center">
       {Button}
     </Link>
   ) : (

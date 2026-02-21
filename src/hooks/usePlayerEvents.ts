@@ -200,6 +200,7 @@ export interface UsePlayerEventsOptions {
   media?: { id: string | number; type: ContentType };
   metadata?: { season?: number; episode?: number };
   saveHistory?: boolean;
+  trackUiState?: boolean;
   onPlay?: (data: UnifiedPlayerEventData) => void;
   onPause?: (data: UnifiedPlayerEventData) => void;
   onSeeked?: (data: UnifiedPlayerEventData) => void;
@@ -211,16 +212,25 @@ export function usePlayerEvents(options: UsePlayerEventsOptions = {}) {
   const { data: user } = useSupabaseUser();
   const documentState = useDocumentVisibility();
 
-  const { media, metadata, saveHistory, onPlay, onPause, onSeeked, onEnded, onTimeUpdate } =
-    options;
+  const {
+    media,
+    metadata,
+    saveHistory,
+    trackUiState = true,
+    onPlay,
+    onPause,
+    onSeeked,
+    onEnded,
+    onTimeUpdate,
+  } = options;
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [lastEvent, setLastEvent] = useState<PlayerEventType | null>(null);
-  const [lastCurrentTime, setLastCurrentTime] = useState(0);
 
   const eventDataRef = useRef<UnifiedPlayerEventData | null>(null);
+  const lastCurrentTimeRef = useRef(0);
 
   const normalizePayload = (data: UnifiedPlayerEventData): UnifiedPlayerEventData => ({
     ...data,
@@ -233,12 +243,12 @@ export function usePlayerEvents(options: UsePlayerEventsOptions = {}) {
 
   const syncToServer = async (data: UnifiedPlayerEventData, completed?: boolean) => {
     if (!saveHistory || !user) return;
-    if (diff(data.currentTime, lastCurrentTime) <= 5) return; // prevent spam
+    if (diff(data.currentTime, lastCurrentTimeRef.current) <= 5) return; // prevent spam
 
     const payload = normalizePayload(data);
 
     const { success, message } = await syncHistory(payload, completed);
-    if (success) setLastCurrentTime(data.currentTime);
+    if (success) lastCurrentTimeRef.current = data.currentTime;
     else console.error("Save history failed:", message);
   };
 
@@ -247,7 +257,7 @@ export function usePlayerEvents(options: UsePlayerEventsOptions = {}) {
     if (documentState === "visible") return;
     if (!eventDataRef.current) return;
     syncToServer(eventDataRef.current);
-  }, [documentState, lastCurrentTime]);
+  }, [documentState]);
 
   useEffect(() => {
     const handleBeforeUnload = () => {
@@ -286,30 +296,34 @@ export function usePlayerEvents(options: UsePlayerEventsOptions = {}) {
 
       const normalized = normalizePayload(parsed);
       eventDataRef.current = normalized;
-      setLastEvent(normalized.event);
+      if (trackUiState) setLastEvent(normalized.event);
 
       switch (normalized.event) {
         case "play":
-          setIsPlaying(true);
+          if (trackUiState) setIsPlaying(true);
           onPlay?.(normalized);
           break;
         case "pause":
-          setIsPlaying(false);
+          if (trackUiState) setIsPlaying(false);
           onPause?.(normalized);
           break;
         case "ended":
-          setIsPlaying(false);
+          if (trackUiState) setIsPlaying(false);
           syncToServer(normalized, true);
           onEnded?.(normalized);
           break;
         case "seeked":
-          setCurrentTime(normalized.currentTime);
-          setDuration(normalized.duration);
+          if (trackUiState) {
+            setCurrentTime(normalized.currentTime);
+            setDuration(normalized.duration);
+          }
           onSeeked?.(normalized);
           break;
         case "timeupdate":
-          setCurrentTime(normalized.currentTime);
-          setDuration(normalized.duration);
+          if (trackUiState) {
+            setCurrentTime(normalized.currentTime);
+            setDuration(normalized.duration);
+          }
           onTimeUpdate?.(normalized);
           break;
       }

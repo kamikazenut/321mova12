@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev --turbopack",
-    "build": "next build",
+    "dev": "patch-package && next dev --turbopack",
+    "build": "patch-package && next build",
     "start": "next start -p 3038",
+    "postinstall": "patch-package",
     "lint": "next lint",
     "sb-start": "supabase start --debug --ignore-health-check",
     "sb-stop": "supabase stop --debug --all",
@@ -45,6 +46,7 @@
     "tmdb-ts": "^2.0.2",
     "use-long-press": "^3.3.0",
     "vaul": "^1.1.2",
+    "vidstack": "^0.6.15",
     "yet-another-react-lightbox": "^3.25.0",
     "zod": "^4.1.1"
   },
@@ -57,6 +59,7 @@
     "@types/react-dom": "19.1.9",
     "eslint": "^9.33.0",
     "eslint-config-next": "15.5.2",
+    "patch-package": "^8.0.1",
     "postcss": "^8.5.6",
     "prettier": "^3.6.2",
     "prettier-plugin-tailwindcss": "^0.6.14",

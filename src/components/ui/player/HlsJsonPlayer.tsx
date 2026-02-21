@@ -4,9 +4,8 @@ import { ContentType } from "@/types";
 import { cn } from "@/utils/helpers";
 import { Close, Server } from "@/utils/icons";
 import { Spinner } from "@heroui/react";
-import { StrataPlayer, StrataCore } from "strataplayer";
-import { HlsPlugin } from "strataplayer/hls";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { defineCustomElements } from "vidstack/elements";
+import { createElement, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type LocalPlayerEventType = "play" | "pause" | "seeked" | "ended" | "timeupdate";
 
@@ -50,6 +49,16 @@ interface OpukSecureStreamResponse {
   success?: boolean;
   secureUrl?: string;
 }
+
+let vidstackElementsPromise: Promise<void> | null = null;
+
+const ensureVidstackElements = (): Promise<void> => {
+  if (!vidstackElementsPromise) {
+    vidstackElementsPromise = defineCustomElements();
+  }
+
+  return vidstackElementsPromise;
+};
 
 const DEFAULT_WORKER_PROXY = "https://small-cake-fdee.piracya.workers.dev";
 const OPUK_API_BASE_URL = "https://www.opuk.cc";
@@ -153,6 +162,37 @@ const fetchOpukSource = async (
   }
 };
 
+interface PlayerElementLike extends HTMLElement {
+  currentTime?: number;
+  duration?: number;
+}
+
+type VideoWithCastSupport = HTMLVideoElement & {
+  webkitShowPlaybackTargetPicker?: () => void;
+};
+
+const CAST_ICON_SVG = `
+<svg viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+  <path d="M3 18h2.8a4.2 4.2 0 0 0-2.8-2.8V18Zm0-5.1a7.1 7.1 0 0 1 7.1 7.1H13A10 10 0 0 0 3 10v2.9Z" fill="currentColor"/>
+  <path d="M3 6v2.9A13.1 13.1 0 0 1 16.1 22H19A16 16 0 0 0 3 6Z" fill="currentColor"/>
+  <path d="M21 3H3a2 2 0 0 0-2 2v5h2V5h18v14h-5v2h5a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Z" fill="currentColor"/>
+</svg>
+`;
+
+const getPlayerCurrentTime = (player: HTMLElement): number => {
+  const value = Number((player as PlayerElementLike).currentTime ?? 0);
+  return Number.isFinite(value) ? value : 0;
+};
+
+const getPlayerDuration = (player: HTMLElement): number => {
+  const value = Number((player as PlayerElementLike).duration ?? 0);
+  return Number.isFinite(value) ? value : 0;
+};
+
+const setPlayerCurrentTime = (player: HTMLElement, time: number): void => {
+  (player as PlayerElementLike).currentTime = time;
+};
+
 const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
   playlistUrl,
   mediaId,
@@ -170,25 +210,22 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
   const [isSourceDialogOpen, setIsSourceDialogOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const unsubscribeRef = useRef<Array<() => void>>([]);
+  const [isVidstackReady, setIsVidstackReady] = useState(false);
+  const [playerElement, setPlayerElement] = useState<HTMLElement | null>(null);
+
   const hasReportedErrorRef = useRef(false);
+  const hasAppliedStartAtRef = useRef(false);
 
   const normalizedStartAt = useMemo(
     () => (typeof startAt === "number" && Number.isFinite(startAt) && startAt > 0 ? startAt : 0),
     [startAt],
   );
-  const plugins = useMemo(() => [new HlsPlugin()], []);
   const streamUrl = useMemo(
     () => availableSources[activeSourceIndex]?.file ?? null,
     [availableSources, activeSourceIndex],
   );
   const canSwitchSources = availableSources.length > 1;
   const activeSource = availableSources[activeSourceIndex];
-
-  const cleanupSubscriptions = useCallback(() => {
-    unsubscribeRef.current.forEach((unsubscribe) => unsubscribe());
-    unsubscribeRef.current = [];
-  }, []);
 
   const reportFatalError = useCallback(
     (message: string) => {
@@ -203,7 +240,27 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
 
   useEffect(() => {
     let disposed = false;
+
+    const initVidstack = async () => {
+      try {
+        await ensureVidstackElements();
+        if (!disposed) setIsVidstackReady(true);
+      } catch {
+        if (disposed) return;
+        reportFatalError("Failed to initialize player.");
+      }
+    };
+
+    void initVidstack();
+    return () => {
+      disposed = true;
+    };
+  }, [reportFatalError]);
+
+  useEffect(() => {
+    let disposed = false;
     hasReportedErrorRef.current = false;
+    hasAppliedStartAtRef.current = false;
 
     const loadPlaylist = async () => {
       setIsLoading(true);
@@ -259,8 +316,6 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
     setActiveSourceIndex(0);
   }, [activeSourceIndex, availableSources.length]);
 
-  useEffect(() => cleanupSubscriptions, [cleanupSubscriptions]);
-
   useEffect(() => {
     if (!openSourceMenuSignal) return;
     setIsSourceDialogOpen(true);
@@ -284,83 +339,212 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
       if (nextIndex === activeSourceIndex) return;
 
       hasReportedErrorRef.current = false;
+      hasAppliedStartAtRef.current = false;
       setError(null);
       setActiveSourceIndex(nextIndex);
     },
     [activeSourceIndex, availableSources.length],
   );
 
-  const onGetInstance = useCallback(
-    (core: StrataCore) => {
-      cleanupSubscriptions();
-      setError(null);
+  const attachPlayerRef = useCallback((node: HTMLElement | null) => {
+    setPlayerElement(node);
+  }, []);
 
-      const emitPlayerEvent = (eventType: LocalPlayerEventType) => {
-        const eventPayload = {
-          type: "LOCAL_PLAYER_EVENT",
-          data: {
-            event: eventType,
-            currentTime: core.currentTime || 0,
-            duration: Number.isFinite(core.duration) ? core.duration : 0,
-            mediaId,
-            mediaType,
-            season,
-            episode,
-          },
-        };
-
-        window.dispatchEvent(new MessageEvent("message", { data: eventPayload }));
+  const emitPlayerEvent = useCallback(
+    (eventType: LocalPlayerEventType, player: HTMLElement) => {
+      const eventPayload = {
+        type: "LOCAL_PLAYER_EVENT",
+        data: {
+          event: eventType,
+          currentTime: getPlayerCurrentTime(player),
+          duration: getPlayerDuration(player),
+          mediaId,
+          mediaType,
+          season,
+          episode,
+        },
       };
 
-      unsubscribeRef.current.push(core.on("play", () => emitPlayerEvent("play")));
-      unsubscribeRef.current.push(core.on("pause", () => emitPlayerEvent("pause")));
-      unsubscribeRef.current.push(core.on("seek", () => emitPlayerEvent("seeked")));
-      unsubscribeRef.current.push(core.on("ended", () => emitPlayerEvent("ended")));
-      unsubscribeRef.current.push(core.on("video:timeupdate", () => emitPlayerEvent("timeupdate")));
-      unsubscribeRef.current.push(
-        core.on("error", (payload) => {
-          if (activeSourceIndex + 1 < availableSources.length) {
-            switchSource(activeSourceIndex + 1);
-            return;
-          }
+      window.dispatchEvent(new MessageEvent("message", { data: eventPayload }));
+    },
+    [episode, mediaId, mediaType, season],
+  );
 
-          const fallback = "Stream playback failed. Please try another source.";
-          if (typeof payload === "string" && payload.trim()) {
-            reportFatalError(payload);
-            return;
-          }
+  useEffect(() => {
+    if (!playerElement || !streamUrl) return;
 
-          reportFatalError(fallback);
-        }),
+    setError(null);
+
+    const handlePlay = () => emitPlayerEvent("play", playerElement);
+    const handlePause = () => emitPlayerEvent("pause", playerElement);
+    const handleSeeked = () => emitPlayerEvent("seeked", playerElement);
+    const handleEnded = () => emitPlayerEvent("ended", playerElement);
+    const handleTimeUpdate = () => emitPlayerEvent("timeupdate", playerElement);
+    const handleCanPlay = () => {
+      if (normalizedStartAt <= 0 || hasAppliedStartAtRef.current) return;
+
+      try {
+        setPlayerCurrentTime(playerElement, normalizedStartAt);
+        hasAppliedStartAtRef.current = true;
+      } catch {}
+    };
+    const handleError = (event: Event) => {
+      if (activeSourceIndex + 1 < availableSources.length) {
+        switchSource(activeSourceIndex + 1);
+        return;
+      }
+
+      const fallback = "Stream playback failed. Please try another source.";
+      const detail = (event as CustomEvent<{ message?: string }>).detail;
+      if (typeof detail?.message === "string" && detail.message.trim()) {
+        reportFatalError(detail.message);
+        return;
+      }
+
+      reportFatalError(fallback);
+    };
+
+    playerElement.addEventListener("play", handlePlay);
+    playerElement.addEventListener("pause", handlePause);
+    playerElement.addEventListener("seeked", handleSeeked);
+    playerElement.addEventListener("ended", handleEnded);
+    playerElement.addEventListener("time-update", handleTimeUpdate);
+    playerElement.addEventListener("timeupdate", handleTimeUpdate as EventListener);
+    playerElement.addEventListener("can-play", handleCanPlay);
+    playerElement.addEventListener("canplay", handleCanPlay as EventListener);
+    playerElement.addEventListener("error", handleError);
+
+    const fallbackSeekTimer = window.setTimeout(() => {
+      if (normalizedStartAt <= 0 || hasAppliedStartAtRef.current) return;
+      if (getPlayerDuration(playerElement) <= 0 || getPlayerCurrentTime(playerElement) >= 1) return;
+
+      try {
+        setPlayerCurrentTime(playerElement, normalizedStartAt);
+        hasAppliedStartAtRef.current = true;
+      } catch {}
+    }, 1200);
+
+    return () => {
+      window.clearTimeout(fallbackSeekTimer);
+      playerElement.removeEventListener("play", handlePlay);
+      playerElement.removeEventListener("pause", handlePause);
+      playerElement.removeEventListener("seeked", handleSeeked);
+      playerElement.removeEventListener("ended", handleEnded);
+      playerElement.removeEventListener("time-update", handleTimeUpdate);
+      playerElement.removeEventListener("timeupdate", handleTimeUpdate as EventListener);
+      playerElement.removeEventListener("can-play", handleCanPlay);
+      playerElement.removeEventListener("canplay", handleCanPlay as EventListener);
+      playerElement.removeEventListener("error", handleError);
+    };
+  }, [
+    activeSourceIndex,
+    availableSources.length,
+    emitPlayerEvent,
+    normalizedStartAt,
+    playerElement,
+    reportFatalError,
+    streamUrl,
+    switchSource,
+  ]);
+
+  const openCastPicker = useCallback(() => {
+    if (!playerElement) return;
+
+    const video = playerElement.querySelector("video") as VideoWithCastSupport | null;
+    if (!video) return;
+
+    if (typeof video.webkitShowPlaybackTargetPicker === "function") {
+      video.webkitShowPlaybackTargetPicker();
+      return;
+    }
+
+    if (typeof video.remote?.prompt === "function") {
+      void video.remote.prompt().catch(() => {});
+    }
+  }, [playerElement]);
+
+  useEffect(() => {
+    if (!playerElement) return;
+
+    let castClickHandler: ((event: Event) => void) | null = null;
+
+    const hasCastSupport = (video: VideoWithCastSupport | null): boolean =>
+      Boolean(
+        video &&
+          (typeof video.webkitShowPlaybackTargetPicker === "function" ||
+            typeof video.remote?.prompt === "function"),
       );
 
-      if (normalizedStartAt > 0) {
-        const offCanPlay = core.on("video:canplay", () => {
-          core.seek(normalizedStartAt);
-          offCanPlay();
-        });
-        unsubscribeRef.current.push(offCanPlay);
+    const syncControlsLayout = () => {
+      const fullscreenButton = playerElement.querySelector("media-fullscreen-button");
+      if (!fullscreenButton) return;
 
-        window.setTimeout(() => {
-          if (core.duration > 0 && core.currentTime < 1) {
-            core.seek(normalizedStartAt);
-          }
-        }, 1200);
+      const bottomControlsGroup = fullscreenButton.parentElement;
+      if (!bottomControlsGroup) return;
+
+      const settingsMenu = playerElement.querySelector("media-menu[part='settings-menu']");
+      if (settingsMenu) {
+        if (settingsMenu.parentElement !== bottomControlsGroup) {
+          bottomControlsGroup.insertBefore(settingsMenu, fullscreenButton);
+        }
+
+        settingsMenu.setAttribute("position", "top");
+        const settingsTooltip = settingsMenu.querySelector("media-menu-button media-tooltip");
+        if (settingsTooltip instanceof HTMLElement) {
+          settingsTooltip.setAttribute("position", "top right");
+        }
       }
-    },
-    [
-      activeSourceIndex,
-      availableSources.length,
-      cleanupSubscriptions,
-      episode,
-      mediaId,
-      mediaType,
-      normalizedStartAt,
-      reportFatalError,
-      season,
-      switchSource,
-    ],
-  );
+
+      const video = playerElement.querySelector("video") as VideoWithCastSupport | null;
+      const existingCastButton = bottomControlsGroup.querySelector(
+        "button[data-local-cast-button='true']",
+      ) as HTMLButtonElement | null;
+
+      if (!hasCastSupport(video)) {
+        if (existingCastButton) {
+          if (castClickHandler) existingCastButton.removeEventListener("click", castClickHandler);
+          existingCastButton.remove();
+        }
+        return;
+      }
+
+      let castButton = existingCastButton;
+      if (!castButton) {
+        castButton = document.createElement("button");
+        castButton.type = "button";
+        castButton.setAttribute("data-local-cast-button", "true");
+        castButton.setAttribute("data-media-button", "");
+        castButton.setAttribute("aria-label", "Cast");
+        castButton.setAttribute("title", "Cast");
+        castButton.innerHTML = CAST_ICON_SVG;
+        castClickHandler = () => openCastPicker();
+        castButton.addEventListener("click", castClickHandler);
+      }
+
+      if (castButton.parentElement !== bottomControlsGroup || castButton.nextElementSibling !== fullscreenButton) {
+        bottomControlsGroup.insertBefore(castButton, fullscreenButton);
+      }
+    };
+
+    syncControlsLayout();
+
+    const observer = new MutationObserver(() => {
+      syncControlsLayout();
+    });
+
+    observer.observe(playerElement, { childList: true, subtree: true });
+
+    return () => {
+      observer.disconnect();
+
+      const castButton = playerElement.querySelector(
+        "button[data-local-cast-button='true']",
+      ) as HTMLButtonElement | null;
+      if (castButton && castClickHandler) {
+        castButton.removeEventListener("click", castClickHandler);
+      }
+    };
+  }, [openCastPicker, playerElement, streamUrl]);
 
   if (error) {
     return (
@@ -370,7 +554,7 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
     );
   }
 
-  if (isLoading || !streamUrl) {
+  if (isLoading || !streamUrl || !isVidstackReady) {
     return (
       <div className="flex h-full w-full items-center justify-center bg-black/90">
         <Spinner color="primary" />
@@ -458,26 +642,25 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
         </div>
       ) : null}
 
-      <StrataPlayer
-        key={streamUrl}
-        src={streamUrl}
-        type="hls"
-        plugins={plugins}
-        autoPlay={false}
-        loop={false}
-        screenshot={false}
-        fullscreenWeb={false}
-        pip={true}
-        setting={true}
-        hotKey={true}
-        centerControls={true}
-        videoFit="contain"
-        useSSR={false}
-        container="h-full w-full bg-black"
-        onGetInstance={onGetInstance}
-      />
+      {createElement(
+        "media-player",
+        {
+          key: streamUrl,
+          ref: attachPlayerRef,
+          src: streamUrl,
+          load: "eager",
+          controls: true,
+          playsinline: true,
+          crossorigin: "anonymous",
+          "stream-type": "on-demand",
+          "view-type": "video",
+          className: "h-full w-full bg-black",
+        },
+        createElement("media-outlet"),
+        createElement("media-community-skin"),
+      )}
     </div>
   );
 };
 
-export default HlsJsonPlayer;
+export default memo(HlsJsonPlayer);

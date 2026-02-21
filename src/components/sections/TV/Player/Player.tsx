@@ -81,6 +81,7 @@ const TvShowPlayer: React.FC<TvShowPlayerProps> = ({
 
   usePlayerEvents({
     saveHistory: true,
+    trackUiState: false,
     media: { id, type: "tv" },
     metadata: { season: episode.season_number, episode: episode.episode_number },
   });

@@ -62,7 +62,7 @@ const MoviePlayer: React.FC<MoviePlayerProps> = ({ movie, startAt }) => {
   );
   const [streamSourceMenuSignal, setStreamSourceMenuSignal] = useState(0);
 
-  usePlayerEvents({ saveHistory: true, media: { id: movie.id, type: "movie" } });
+  usePlayerEvents({ saveHistory: true, trackUiState: false, media: { id: movie.id, type: "movie" } });
   useDocumentTitle(`Play ${title} | ${siteConfig.name}`);
 
   useEffect(() => {
