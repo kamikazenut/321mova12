@@ -23,6 +23,9 @@ const TvShowPlayerPage: NextPage<Params<{ id: number; season: number; episode: n
   } = useQuery({
     queryFn: () => tmdb.tvShows.details(id),
     queryKey: ["tv-show-player-details", id],
+    staleTime: 1000 * 60 * 10,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   const {
@@ -32,11 +35,17 @@ const TvShowPlayerPage: NextPage<Params<{ id: number; season: number; episode: n
   } = useQuery({
     queryFn: () => tmdb.tvShows.season(id, season),
     queryKey: ["tv-show-season", id, season],
+    staleTime: 1000 * 60 * 10,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   const { data: startAt, isPending: isPendingStartAt } = useQuery({
     queryFn: () => getTvShowLastPosition(id, season, episode),
     queryKey: ["tv-show-player-start-at", id, season, episode],
+    staleTime: 1000 * 60 * 10,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   if (isPendingTv || isPendingSeason || isPendingStartAt) {

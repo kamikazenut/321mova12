@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 
 const CHECK_DELAY_MS = 150;
 const SCRIPT_PROBE_TIMEOUT_MS = 2000;
-const RECHECK_INTERVAL_MS = 5000;
+const SCRIPT_CONFIRM_DELAY_MS = 300;
+const SCRIPT_PROBE_BLOCKED_THRESHOLD = 2;
+const VISIBILITY_RECHECK_DELAY_MS = 250;
 
 const BAIT_SELECTORS = [
   { id: "ad_banner", className: "adsbox ad-banner ad-placement textads pub_300x250" },
@@ -99,18 +101,41 @@ const detectByScriptProbe = (url: string): Promise<boolean> =>
     (document.head || document.documentElement).appendChild(script);
   });
 
-const detectAdBlock = async (): Promise<boolean> => {
-  if (typeof window === "undefined" || typeof document === "undefined") return false;
+const detectAdBlockSignals = async (): Promise<{
+  baitBlocked: boolean;
+  localBlockedCount: number;
+}> => {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return { baitBlocked: false, localBlockedCount: 0 };
+  }
 
   const baitBlocked = await detectByBait();
   const localProbeResults = await Promise.all(
     LOCAL_PROBE_SCRIPT_URLS.map((url) => detectByScriptProbe(url)),
   );
 
-  const localBlocked = localProbeResults.some(Boolean);
+  return {
+    baitBlocked,
+    localBlockedCount: localProbeResults.filter(Boolean).length,
+  };
+};
 
-  // Enforce based on first-party/local signals only.
-  return baitBlocked || localBlocked;
+const detectAdBlock = async (): Promise<boolean> => {
+  if (typeof window === "undefined" || typeof document === "undefined") return false;
+  if (document.visibilityState !== "visible") return false;
+
+  const initialSignals = await detectAdBlockSignals();
+  if (initialSignals.baitBlocked) return true;
+  if (initialSignals.localBlockedCount < SCRIPT_PROBE_BLOCKED_THRESHOLD) return false;
+
+  await wait(SCRIPT_CONFIRM_DELAY_MS);
+  if (document.visibilityState !== "visible") return false;
+
+  const confirmedSignals = await detectAdBlockSignals();
+  return (
+    confirmedSignals.baitBlocked ||
+    confirmedSignals.localBlockedCount >= SCRIPT_PROBE_BLOCKED_THRESHOLD
+  );
 };
 
 const useAdBlockDetector = () => {
@@ -119,8 +144,11 @@ const useAdBlockDetector = () => {
 
   useEffect(() => {
     let disposed = false;
+    let timeoutId: number | null = null;
 
     const runDetection = async () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+
       try {
         const blocked = await detectAdBlock();
         if (!disposed) setIsAdBlockDetected(blocked);
@@ -129,14 +157,24 @@ const useAdBlockDetector = () => {
       }
     };
 
+    const scheduleDetection = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(() => {
+        void runDetection();
+      }, VISIBILITY_RECHECK_DELAY_MS);
+    };
+
     void runDetection();
-    const intervalId = window.setInterval(() => {
-      void runDetection();
-    }, RECHECK_INTERVAL_MS);
+    document.addEventListener("visibilitychange", scheduleDetection);
+    window.addEventListener("focus", scheduleDetection);
 
     return () => {
       disposed = true;
-      window.clearInterval(intervalId);
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+      document.removeEventListener("visibilitychange", scheduleDetection);
+      window.removeEventListener("focus", scheduleDetection);
     };
   }, []);
 

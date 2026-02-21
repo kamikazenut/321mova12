@@ -21,11 +21,17 @@ const MoviePlayerPage: NextPage<Params<{ id: number }>> = ({ params }) => {
   } = useQuery({
     queryFn: () => tmdb.movies.details(id),
     queryKey: ["movie-player-detail", id],
+    staleTime: 1000 * 60 * 10,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   const { data: startAt, isPending: isPendingStartAt } = useQuery({
     queryFn: () => getMovieLastPosition(id),
     queryKey: ["movie-player-start-at", id],
+    staleTime: 1000 * 60 * 10,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   if (isPending || isPendingStartAt) {

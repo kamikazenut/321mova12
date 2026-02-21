@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 
 const VIXSRC_BASE_URL = "https://vixsrc.to";
 const CINEMAOS_API_BASE_URL = "https://cinemaos.tech/api/neo/resources";
+const OPUK_API_BASE_URL = "https://www.opuk.cc";
+const OPUK_ORIGIN = "https://www.opuk.cc";
+const OPUK_REFERER = "https://www.opuk.cc/";
 const REQUEST_TIMEOUT_MS = 12000;
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
@@ -50,6 +53,13 @@ interface CinemaProviderResponse {
     sources?: CinemaSource[];
   };
   error?: string;
+}
+
+interface OpukSecureStreamResponse {
+  success?: boolean;
+  secureUrl?: string;
+  downloadFile?: string;
+  expires?: number;
 }
 
 const isDigits = (value: string | null): value is string => !!value && /^\d+$/.test(value);
@@ -375,6 +385,40 @@ const fetchCinemaProviderSources = async (
   }
 };
 
+const getOpukSecureStreamEndpoint = (requestParams: ParsedMediaRequest): string => {
+  const suffix =
+    requestParams.type === "movie"
+      ? requestParams.id
+      : `${requestParams.id}-${requestParams.season}-${requestParams.episode}`;
+  return `${OPUK_API_BASE_URL}/api/secure-stream/${suffix}/`;
+};
+
+const fetchOpukSecureUrl = async (requestParams: ParsedMediaRequest): Promise<string | null> => {
+  try {
+    const endpoint = getOpukSecureStreamEndpoint(requestParams);
+    const response = await fetch(endpoint, {
+      cache: "no-store",
+      headers: {
+        "user-agent": USER_AGENT,
+        accept: "application/json, text/plain, */*",
+        referer: OPUK_REFERER,
+        origin: OPUK_ORIGIN,
+      },
+    });
+
+    if (!response.ok) return null;
+
+    const payload = (await response.json()) as OpukSecureStreamResponse;
+    if (!payload.success || typeof payload.secureUrl !== "string" || payload.secureUrl.length === 0) {
+      return null;
+    }
+
+    return payload.secureUrl;
+  } catch {
+    return null;
+  }
+};
+
 const buildPrimaryVixsrcSource = (masterPlaylistUrl: string, pageUrl: string): PlaylistSource => {
   const headers: HeaderMap = {
     Referer: pageUrl,
@@ -431,13 +475,33 @@ const buildAsiacloudHindiFallback = (sources: CinemaSource[]): PlaylistSource | 
   };
 };
 
+const buildOpukFallback = (secureUrl: string): PlaylistSource => {
+  const headers: HeaderMap = {
+    Referer: OPUK_REFERER,
+    Origin: OPUK_ORIGIN,
+    "User-Agent": USER_AGENT,
+  };
+
+  return {
+    type: "hls",
+    file: buildWorkerM3u8ProxyUrl(secureUrl, headers),
+    label: "OPUK (Secondary)",
+    provider: "opuk",
+  };
+};
+
 const getSecondarySources = async (requestParams: ParsedMediaRequest): Promise<PlaylistSource[]> => {
-  const [primeResult, asiaResult] = await Promise.allSettled([
+  const [opukResult, primeResult, asiaResult] = await Promise.allSettled([
+    fetchOpukSecureUrl(requestParams),
     fetchCinemaProviderSources(requestParams, "primevids"),
     fetchCinemaProviderSources(requestParams, "asiacloud"),
   ]);
 
   const secondary: PlaylistSource[] = [];
+
+  if (opukResult.status === "fulfilled" && opukResult.value) {
+    secondary.push(buildOpukFallback(opukResult.value));
+  }
 
   if (primeResult.status === "fulfilled") {
     const candidate = primeResult.value.find((source) => typeof source.url === "string");
