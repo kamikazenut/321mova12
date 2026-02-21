@@ -57,6 +57,8 @@ const OPUK_ORIGIN = "https://www.opuk.cc";
 const OPUK_REFERER = "https://www.opuk.cc/";
 const OPUK_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
+const OPUK_CITY_LABEL = "Amsterdam";
+const OPUK_CITY_PROVIDER = "amsterdam";
 
 const pickHlsSources = (payload: PlaylistResponse): StreamSourceOption[] => {
   if (!Array.isArray(payload.playlist)) return [];
@@ -142,9 +144,9 @@ const fetchOpukSource = async (
         referer: OPUK_REFERER,
         "user-agent": OPUK_USER_AGENT,
       }),
-      label: "OPUK (Secondary)",
-      provider: "opuk",
-      isDefault: false,
+      label: OPUK_CITY_LABEL,
+      provider: OPUK_CITY_PROVIDER,
+      isDefault: true,
     };
   } catch {
     return null;
@@ -221,10 +223,11 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
 
         const payload = (await response.json()) as PlaylistResponse;
         const parsedSources = pickHlsSources(payload);
-        const hasOpuk = parsedSources.some((source) => source.provider?.toLowerCase() === "opuk");
+        const hasOpuk = parsedSources.some(
+          (source) => source.provider?.toLowerCase() === OPUK_CITY_PROVIDER,
+        );
         const opukSource = hasOpuk ? null : await fetchOpukSource(mediaType, mediaId, season, episode);
-
-        const mergedSources = opukSource ? [...parsedSources, opukSource] : parsedSources;
+        const mergedSources = opukSource ? [opukSource, ...parsedSources] : parsedSources;
 
         if (!mergedSources.length) {
           throw new Error("No HLS stream found in playlist response");

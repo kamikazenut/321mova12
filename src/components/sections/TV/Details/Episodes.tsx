@@ -3,7 +3,7 @@ import useBreakpoints from "@/hooks/useBreakpoints";
 import { cn, formatDate, isEmpty } from "@/utils/helpers";
 import { PlayOutline } from "@/utils/icons";
 import { getImageUrl, getLoadingLabel, movieDurationString } from "@/utils/movies";
-import { Card, CardBody, CardFooter, Chip, Image, Spinner } from "@heroui/react";
+import { Card, CardBody, CardFooter, Chip, Spinner } from "@heroui/react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { memo } from "react";
@@ -85,7 +85,8 @@ export const EpisodeListCard: React.FC<EpisodeCardProps> = ({
   id,
   withAnimation = true,
 }) => {
-  const imageUrl = getImageUrl(episode.still_path);
+  const imageUrl = getImageUrl(episode.still_path, "backdrop");
+  const fallbackImage = getImageUrl(undefined, "backdrop");
   const { mobile } = useBreakpoints();
   const isNotReleased = !episode.air_date || new Date(episode.air_date) > new Date();
   const isOdd = order % 2 !== 0;
@@ -110,12 +111,17 @@ export const EpisodeListCard: React.FC<EpisodeCardProps> = ({
       )}
     >
       <div className="relative">
-        <Image
+        <img
           alt={episode.name}
           src={imageUrl}
-          height={120}
-          width={mobile ? 180 : 220}
-          className="rounded-r-none object-cover"
+          loading="lazy"
+          decoding="async"
+          onError={(event) => {
+            if (event.currentTarget.src === fallbackImage) return;
+            event.currentTarget.src = fallbackImage;
+          }}
+          className="h-[120px] rounded-r-none object-cover"
+          style={{ width: mobile ? 180 : 220 }}
         />
         {!isNotReleased && (
           <div className="absolute inset-0 flex items-center justify-center">
@@ -165,7 +171,8 @@ export const EpisodeListCard: React.FC<EpisodeCardProps> = ({
 };
 
 const EpisodeGridCard: React.FC<EpisodeCardProps> = ({ episode, id }) => {
-  const imageUrl = getImageUrl(episode.still_path);
+  const imageUrl = getImageUrl(episode.still_path, "backdrop");
+  const fallbackImage = getImageUrl(undefined, "backdrop");
   const isNotReleased = !episode.air_date || new Date(episode.air_date) > new Date();
   const href = !isNotReleased
     ? `/tv/${id}/${episode.season_number}/${episode.episode_number}/player`
@@ -187,9 +194,15 @@ const EpisodeGridCard: React.FC<EpisodeCardProps> = ({ episode, id }) => {
     >
       <CardBody className="overflow-visible p-0">
         <div className="relative">
-          <Image
+          <img
             alt={episode.name}
             src={imageUrl}
+            loading="lazy"
+            decoding="async"
+            onError={(event) => {
+              if (event.currentTarget.src === fallbackImage) return;
+              event.currentTarget.src = fallbackImage;
+            }}
             className="aspect-video w-full rounded-b-none object-cover"
           />
           {!isNotReleased && (

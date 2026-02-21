@@ -5,6 +5,18 @@ const CINEMAOS_API_BASE_URL = "https://cinemaos.tech/api/neo/resources";
 const OPUK_API_BASE_URL = "https://www.opuk.cc";
 const OPUK_ORIGIN = "https://www.opuk.cc";
 const OPUK_REFERER = "https://www.opuk.cc/";
+const CITY_SERVER_LABELS = {
+  opuk: "Amsterdam",
+  vixsrc: "Berlin",
+  primevids: "Cairo",
+  asiacloudHindi: "Delhi (Hindi)",
+} as const;
+const CITY_SERVER_PROVIDERS = {
+  opuk: "amsterdam",
+  vixsrc: "berlin",
+  primevids: "cairo",
+  asiacloudHindi: "delhi",
+} as const;
 const REQUEST_TIMEOUT_MS = 12000;
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
@@ -419,7 +431,7 @@ const fetchOpukSecureUrl = async (requestParams: ParsedMediaRequest): Promise<st
   }
 };
 
-const buildPrimaryVixsrcSource = (masterPlaylistUrl: string, pageUrl: string): PlaylistSource => {
+const buildVixsrcSource = (masterPlaylistUrl: string, pageUrl: string): PlaylistSource => {
   const headers: HeaderMap = {
     Referer: pageUrl,
     Origin: new URL(pageUrl).origin,
@@ -429,9 +441,8 @@ const buildPrimaryVixsrcSource = (masterPlaylistUrl: string, pageUrl: string): P
   return {
     type: "hls",
     file: buildWorkerM3u8ProxyUrl(masterPlaylistUrl, headers),
-    label: "Vixsrc (Primary)",
-    default: true,
-    provider: "vixsrc",
+    label: CITY_SERVER_LABELS.vixsrc,
+    provider: CITY_SERVER_PROVIDERS.vixsrc,
   };
 };
 
@@ -451,8 +462,8 @@ const buildPrimeVidsFallback = (source: CinemaSource): PlaylistSource | null => 
   return {
     type: "hls",
     file: buildWorkerM3u8ProxyUrl(resolved.url, headers),
-    label: "PrimeVids (Secondary)",
-    provider: "primevids",
+    label: CITY_SERVER_LABELS.primevids,
+    provider: CITY_SERVER_PROVIDERS.primevids,
   };
 };
 
@@ -470,8 +481,8 @@ const buildAsiacloudHindiFallback = (sources: CinemaSource[]): PlaylistSource | 
   return {
     type: "hls",
     file: buildWorkerM3u8ProxyUrl(resolved.url, resolved.headers),
-    label: "AsiaCloud Hindi (Secondary)",
-    provider: "asiacloud",
+    label: CITY_SERVER_LABELS.asiacloudHindi,
+    provider: CITY_SERVER_PROVIDERS.asiacloudHindi,
   };
 };
 
@@ -485,8 +496,8 @@ const buildOpukFallback = (secureUrl: string): PlaylistSource => {
   return {
     type: "hls",
     file: buildWorkerM3u8ProxyUrl(secureUrl, headers),
-    label: "OPUK (Secondary)",
-    provider: "opuk",
+    label: CITY_SERVER_LABELS.opuk,
+    provider: CITY_SERVER_PROVIDERS.opuk,
   };
 };
 
@@ -541,34 +552,47 @@ export const GET = async (request: NextRequest) => {
   const timeoutId = setTimeout(() => timeout.abort(), REQUEST_TIMEOUT_MS);
 
   try {
-    const response = await fetch(pageUrl, {
-      cache: "no-store",
-      signal: timeout.signal,
-      headers: {
-        "user-agent": USER_AGENT,
-        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      },
-    });
+    let vixsrcSource: PlaylistSource | null = null;
+    try {
+      const vixsrcResponse = await fetch(pageUrl, {
+        cache: "no-store",
+        signal: timeout.signal,
+        headers: {
+          "user-agent": USER_AGENT,
+          accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        },
+      });
 
-    if (!response.ok) {
-      return NextResponse.json(
-        { error: `Upstream page request failed (${response.status})` },
-        { status: 502 },
-      );
+      if (vixsrcResponse.ok) {
+        const html = await vixsrcResponse.text();
+        const masterPlaylistUrl = extractMasterPlaylistUrl(html, pageUrl);
+        if (masterPlaylistUrl) {
+          vixsrcSource = buildVixsrcSource(masterPlaylistUrl, pageUrl);
+        }
+      }
+    } catch {
+      // Continue without vixsrc and rely on other providers.
     }
 
-    const html = await response.text();
-    const masterPlaylistUrl = extractMasterPlaylistUrl(html, pageUrl);
-
-    if (!masterPlaylistUrl) {
-      return NextResponse.json({ error: "Failed to extract Vixsrc playlist" }, { status: 502 });
-    }
-
-    const primarySource = buildPrimaryVixsrcSource(masterPlaylistUrl, pageUrl);
     const secondarySources = await getSecondarySources(requestParams);
-    const sources = dedupeSources([primarySource, ...secondarySources]);
+    const opukSource =
+      secondarySources.find((source) => source.provider === CITY_SERVER_PROVIDERS.opuk) || null;
+    const remainingSecondary = secondarySources.filter(
+      (source) => source.provider !== CITY_SERVER_PROVIDERS.opuk,
+    );
 
-    return NextResponse.json(toPlaylistPayload(sources), {
+    const orderedSources = dedupeSources(
+      [opukSource, vixsrcSource, ...remainingSecondary].filter(Boolean) as PlaylistSource[],
+    ).map((source, index) => ({
+      ...source,
+      default: index === 0,
+    }));
+
+    if (!orderedSources.length) {
+      return NextResponse.json({ error: "Failed to resolve any playable source" }, { status: 502 });
+    }
+
+    return NextResponse.json(toPlaylistPayload(orderedSources), {
       headers: {
         "cache-control": "no-store, max-age=0",
       },
