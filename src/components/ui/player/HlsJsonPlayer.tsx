@@ -649,7 +649,6 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
           ref: attachPlayerRef,
           src: streamUrl,
           load: "eager",
-          controls: true,
           playsinline: true,
           crossorigin: "anonymous",
           "stream-type": "on-demand",
