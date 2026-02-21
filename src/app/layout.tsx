@@ -5,6 +5,7 @@ import "../styles/globals.css";
 import "../styles/lightbox.css";
 import "vidstack/styles/defaults.css";
 import "vidstack/styles/community-skin/video.css";
+import "../styles/vidstack-overrides.css";
 import Providers from "./providers";
 import TopNavbar from "@/components/ui/layout/TopNavbar";
 import BottomNavbar from "@/components/ui/layout/BottomNavbar";

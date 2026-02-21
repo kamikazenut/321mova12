@@ -653,7 +653,7 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
           crossorigin: "anonymous",
           "stream-type": "on-demand",
           "view-type": "video",
-          className: "h-full w-full bg-black",
+          className: "v321-vidstack-player h-full w-full bg-black",
         },
         createElement("media-outlet"),
         createElement("media-community-skin"),

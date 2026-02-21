@@ -1,0 +1,25 @@
+/* 321 player-specific Vidstack overrides. Loaded after Vidstack defaults. */
+
+:where(media-player.v321-vidstack-player media-outlet) {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  height: 100% !important;
+  overflow: hidden !important;
+  background: black !important;
+}
+
+:where(media-player.v321-vidstack-player media-outlet > shadow-root),
+:where(media-player.v321-vidstack-player media-outlet > shadow-root > *) {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+:where(media-player.v321-vidstack-player media-outlet video),
+:where(media-player.v321-vidstack-player media-outlet > shadow-root > video) {
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
+  object-position: center center !important;
+}
