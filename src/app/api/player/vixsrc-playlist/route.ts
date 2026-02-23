@@ -5,15 +5,21 @@ const CINEMAOS_API_BASE_URL = "https://cinemaos.tech/api/neo/resources";
 const OPUK_API_BASE_URL = "https://www.opuk.cc";
 const OPUK_ORIGIN = "https://www.opuk.cc";
 const OPUK_REFERER = "https://www.opuk.cc/";
+const WOLFFLIX_API_BASE_URL = "https://api.wolfflix.xyz";
+const WOLFFLIX_ORIGIN = "https://wolfflix.xyz";
+const WOLFFLIX_REFERER = "https://wolfflix.xyz/";
+const ENABLE_WOLFFLIX_FALLBACK = false;
 const CITY_SERVER_LABELS = {
   opuk: "Amsterdam",
   vixsrc: "Berlin",
+  wolfflix: "Brussels",
   primevids: "Cairo",
   asiacloudHindi: "Delhi (Hindi)",
 } as const;
 const CITY_SERVER_PROVIDERS = {
   opuk: "amsterdam",
   vixsrc: "berlin",
+  wolfflix: "brussels",
   primevids: "cairo",
   asiacloudHindi: "delhi",
 } as const;
@@ -72,6 +78,12 @@ interface OpukSecureStreamResponse {
   secureUrl?: string;
   downloadFile?: string;
   expires?: number;
+}
+
+interface WolfflixExtractResponse {
+  success?: boolean;
+  streamUrl?: string;
+  error?: string;
 }
 
 const isDigits = (value: string | null): value is string => !!value && /^\d+$/.test(value);
@@ -431,6 +443,40 @@ const fetchOpukSecureUrl = async (requestParams: ParsedMediaRequest): Promise<st
   }
 };
 
+const fetchWolfflixStreamUrl = async (requestParams: ParsedMediaRequest): Promise<string | null> => {
+  try {
+    const query = new URLSearchParams({
+      tmdbId: requestParams.id,
+    });
+
+    if (requestParams.type === "tv") {
+      query.set("s", requestParams.season || "");
+      query.set("e", requestParams.episode || "");
+    }
+
+    const response = await fetch(`${WOLFFLIX_API_BASE_URL}/extract?${query.toString()}`, {
+      cache: "no-store",
+      headers: {
+        "user-agent": USER_AGENT,
+        accept: "application/json, text/plain, */*",
+        referer: WOLFFLIX_REFERER,
+        origin: WOLFFLIX_ORIGIN,
+      },
+    });
+
+    if (!response.ok) return null;
+
+    const payload = (await response.json()) as WolfflixExtractResponse;
+    if (!payload.success || typeof payload.streamUrl !== "string" || payload.streamUrl.length === 0) {
+      return null;
+    }
+
+    return payload.streamUrl;
+  } catch {
+    return null;
+  }
+};
+
 const buildVixsrcSource = (masterPlaylistUrl: string, pageUrl: string): PlaylistSource => {
   const headers: HeaderMap = {
     Referer: pageUrl,
@@ -501,9 +547,33 @@ const buildOpukFallback = (secureUrl: string): PlaylistSource => {
   };
 };
 
-const getSecondarySources = async (requestParams: ParsedMediaRequest): Promise<PlaylistSource[]> => {
-  const [opukResult, primeResult, asiaResult] = await Promise.allSettled([
+const buildWolfflixLocalProxyUrl = (request: NextRequest, upstreamUrl: string): string => {
+  const url = new URL("/api/player/wolfflix-proxy", request.nextUrl.origin);
+  url.searchParams.set("url", upstreamUrl);
+  return url.toString();
+};
+
+const buildWolfflixFallback = (request: NextRequest, streamUrl: string): PlaylistSource => {
+  return {
+    type: "hls",
+    // Route through local proxy so external HLS clients can consume it without Wolfflix CORS whitelist issues.
+    file: buildWolfflixLocalProxyUrl(request, streamUrl),
+    label: CITY_SERVER_LABELS.wolfflix,
+    provider: CITY_SERVER_PROVIDERS.wolfflix,
+  };
+};
+
+const getSecondarySources = async (
+  request: NextRequest,
+  requestParams: ParsedMediaRequest,
+): Promise<PlaylistSource[]> => {
+  const wolfflixPromise = ENABLE_WOLFFLIX_FALLBACK
+    ? fetchWolfflixStreamUrl(requestParams)
+    : Promise.resolve<string | null>(null);
+
+  const [opukResult, wolfflixResult, primeResult, asiaResult] = await Promise.allSettled([
     fetchOpukSecureUrl(requestParams),
+    wolfflixPromise,
     fetchCinemaProviderSources(requestParams, "primevids"),
     fetchCinemaProviderSources(requestParams, "asiacloud"),
   ]);
@@ -512,6 +582,10 @@ const getSecondarySources = async (requestParams: ParsedMediaRequest): Promise<P
 
   if (opukResult.status === "fulfilled" && opukResult.value) {
     secondary.push(buildOpukFallback(opukResult.value));
+  }
+
+  if (ENABLE_WOLFFLIX_FALLBACK && wolfflixResult.status === "fulfilled" && wolfflixResult.value) {
+    secondary.push(buildWolfflixFallback(request, wolfflixResult.value));
   }
 
   if (primeResult.status === "fulfilled") {
@@ -574,7 +648,7 @@ export const GET = async (request: NextRequest) => {
       // Continue without vixsrc and rely on other providers.
     }
 
-    const secondarySources = await getSecondarySources(requestParams);
+    const secondarySources = await getSecondarySources(request, requestParams);
     const opukSource =
       secondarySources.find((source) => source.provider === CITY_SERVER_PROVIDERS.opuk) || null;
     const remainingSecondary = secondarySources.filter(

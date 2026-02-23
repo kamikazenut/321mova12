@@ -11,20 +11,24 @@ import {
   ScrollShadow,
 } from "@heroui/react";
 import { ADS_WARNING_STORAGE_KEY, IS_BROWSER } from "@/utils/constants";
+import useSupabaseUser from "@/hooks/useSupabaseUser";
+import { isPremiumUser } from "@/utils/billing/premium";
 
 const AdsWarning: React.FC = () => {
+  const { data: user, isLoading } = useSupabaseUser();
   const [seen, setSeen] = useLocalStorage<boolean>({
     key: ADS_WARNING_STORAGE_KEY,
     getInitialValueInEffect: false,
   });
   const [opened, handlers] = useDisclosure(!seen && IS_BROWSER);
+  const isPremium = isPremiumUser(user);
 
   const handleSeen = () => {
     handlers.close();
     setSeen(true);
   };
 
-  if (seen) return null;
+  if (isLoading || isPremium || seen) return null;
 
   return (
     <Modal

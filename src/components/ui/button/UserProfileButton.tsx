@@ -3,7 +3,7 @@ import useBreakpoints from "@/hooks/useBreakpoints";
 import useSupabaseUser from "@/hooks/useSupabaseUser";
 import { DropdownItemProps } from "@/types/component";
 import { env } from "@/utils/env";
-import { Gear, Logout, User } from "@/utils/icons";
+import { Ads, Logout, User } from "@/utils/icons";
 import { useRouter } from "@bprogress/next/app";
 import {
   addToast,
@@ -26,9 +26,11 @@ const UserProfileButton: React.FC = () => {
 
   const ITEMS: DropdownItemProps[] = useMemo(
     () => [
-      // TODO: Add profile and settings page
-      // { label: "Profile", href: "/profile", icon: <User /> },
-      // { label: "Settings", href: "/settings", icon: <Gear /> },
+      {
+        label: "Ad-Free",
+        href: "/billing",
+        icon: <Ads />,
+      },
       {
         label: "Logout",
         onClick: async () => {

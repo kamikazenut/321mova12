@@ -19,6 +19,7 @@ import { NuqsAdapter } from "nuqs/adapters/next/app";
 import { Suspense } from "react";
 
 const Disclaimer = dynamic(() => import("@/components/ui/overlay/Disclaimer"));
+const AdNetworkScript = dynamic(() => import("@/components/ui/layout/AdNetworkScript"));
 import { env } from "@/utils/env";
 import Script from "next/script";
 
@@ -116,6 +117,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
                 </main>
               </Sidebar>
               <BottomNavbar />
+              <AdNetworkScript />
             </Providers>
           </NuqsAdapter>
         </Suspense>
@@ -150,9 +152,6 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         </Script>
         */}
 
-        <Script id="bvtpk-tag" strategy="afterInteractive">
-          {`(function(s){s.dataset.zone='9408521',s.src='https://bvtpk.com/tag.min.js'})([document.documentElement, document.body].filter(Boolean).pop().appendChild(document.createElement('script')));`}
-        </Script>
       </body>
     </html>
   );

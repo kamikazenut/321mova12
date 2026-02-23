@@ -135,6 +135,114 @@ export type Database = {
           },
         ];
       };
+      premium_code_redemptions: {
+        Row: {
+          applied_days: number;
+          applied_plan: "monthly" | "yearly";
+          code_id: number;
+          id: number;
+          redeemed_at: string;
+          user_id: string;
+        };
+        Insert: {
+          applied_days: number;
+          applied_plan: "monthly" | "yearly";
+          code_id: number;
+          id?: never;
+          redeemed_at?: string;
+          user_id: string;
+        };
+        Update: {
+          applied_days?: number;
+          applied_plan?: "monthly" | "yearly";
+          code_id?: number;
+          id?: never;
+          redeemed_at?: string;
+          user_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "premium_code_redemptions_code_id_fkey";
+            columns: ["code_id"];
+            isOneToOne: false;
+            referencedRelation: "premium_codes";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "premium_code_redemptions_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: false;
+            referencedRelation: "users";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      premium_codes: {
+        Row: {
+          active: boolean;
+          code: string;
+          created_at: string;
+          created_by: string | null;
+          duration_days: number;
+          expires_at: string | null;
+          id: number;
+          last_redeemed_at: string | null;
+          last_redeemed_by: string | null;
+          max_redemptions: number;
+          metadata: Json;
+          plan: "monthly" | "yearly";
+          redemption_count: number;
+          updated_at: string;
+        };
+        Insert: {
+          active?: boolean;
+          code: string;
+          created_at?: string;
+          created_by?: string | null;
+          duration_days: number;
+          expires_at?: string | null;
+          id?: never;
+          last_redeemed_at?: string | null;
+          last_redeemed_by?: string | null;
+          max_redemptions?: number;
+          metadata?: Json;
+          plan: "monthly" | "yearly";
+          redemption_count?: number;
+          updated_at?: string;
+        };
+        Update: {
+          active?: boolean;
+          code?: string;
+          created_at?: string;
+          created_by?: string | null;
+          duration_days?: number;
+          expires_at?: string | null;
+          id?: never;
+          last_redeemed_at?: string | null;
+          last_redeemed_by?: string | null;
+          max_redemptions?: number;
+          metadata?: Json;
+          plan?: "monthly" | "yearly";
+          redemption_count?: number;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "premium_codes_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "users";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "premium_codes_last_redeemed_by_fkey";
+            columns: ["last_redeemed_by"];
+            isOneToOne: false;
+            referencedRelation: "users";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       ratings: {
         Row: {
           created_at: string;
@@ -230,6 +338,17 @@ export type Database = {
         Returns: {
           average_rating: number;
           ratings_count: number;
+        }[];
+      };
+      redeem_premium_code: {
+        Args: {
+          p_code: string;
+          p_user_id: string;
+        };
+        Returns: {
+          code_id: number;
+          duration_days: number;
+          plan: string;
         }[];
       };
     };

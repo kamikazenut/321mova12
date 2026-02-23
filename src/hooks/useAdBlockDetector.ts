@@ -5,20 +5,18 @@ import { useEffect, useState } from "react";
 const CHECK_DELAY_MS = 150;
 const SCRIPT_PROBE_TIMEOUT_MS = 2000;
 const SCRIPT_CONFIRM_DELAY_MS = 300;
-const SCRIPT_PROBE_BLOCKED_THRESHOLD = 2;
+const PROBE_AVAILABILITY_TIMEOUT_MS = 1200;
 const VISIBILITY_RECHECK_DELAY_MS = 250;
+const BAIT_BLOCKED_THRESHOLD = 2;
+const SCRIPT_PROBE_MINIMUM_COUNT = 3;
+const SCRIPT_PROBE_BLOCKED_THRESHOLD = 3;
 
 const BAIT_SELECTORS = [
   { id: "ad_banner", className: "adsbox ad-banner ad-placement textads pub_300x250" },
   { id: "google_ads_iframe_1", className: "advertisement sponsored promoted" },
 ];
 
-const LOCAL_PROBE_SCRIPT_URLS = [
-  "/ads.js",
-  "/adservice.js",
-  "/banner-ad.js",
-  "/prebid-ads.js",
-];
+const LOCAL_PROBE_SCRIPT_URLS = ["/ads.js", "/adservice.js", "/banner-ad.js", "/prebid-ads.js"];
 
 const wait = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 
@@ -44,11 +42,11 @@ const isElementBlocked = (element: HTMLElement): boolean => {
   );
 };
 
-const detectByBait = async (): Promise<boolean> => {
+const detectByBait = async (): Promise<number> => {
   await ensureBodyReady();
-  if (!document.body) return false;
+  if (!document.body) return 0;
 
-  if (typeof window === "undefined" || typeof document === "undefined") return false;
+  if (typeof window === "undefined" || typeof document === "undefined") return 0;
 
   const baits = BAIT_SELECTORS.map(({ id, className }) => {
     const bait = document.createElement("div");
@@ -63,12 +61,38 @@ const detectByBait = async (): Promise<boolean> => {
 
   await wait(CHECK_DELAY_MS);
 
-  const blocked = baits.some((bait) => !bait.isConnected || isElementBlocked(bait));
+  const blockedCount = baits.reduce((count, bait) => {
+    const blocked = !bait.isConnected || isElementBlocked(bait);
+    return blocked ? count + 1 : count;
+  }, 0);
 
   baits.forEach((bait) => {
     if (bait.isConnected) bait.remove();
   });
-  return blocked;
+
+  return blockedCount;
+};
+
+const canReachLocalProbe = async (url: string): Promise<boolean> => {
+  if (typeof window === "undefined") return false;
+
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), PROBE_AVAILABILITY_TIMEOUT_MS);
+  const separator = url.includes("?") ? "&" : "?";
+
+  try {
+    const response = await fetch(`${url}${separator}health=${Date.now()}`, {
+      method: "HEAD",
+      cache: "no-store",
+      signal: controller.signal,
+    });
+
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
 };
 
 const detectByScriptProbe = (url: string): Promise<boolean> =>
@@ -101,23 +125,38 @@ const detectByScriptProbe = (url: string): Promise<boolean> =>
     (document.head || document.documentElement).appendChild(script);
   });
 
-const detectAdBlockSignals = async (): Promise<{
-  baitBlocked: boolean;
+interface AdBlockSignals {
+  baitBlockedCount: number;
   localBlockedCount: number;
-}> => {
+  localProbeCount: number;
+}
+
+const detectAdBlockSignals = async (): Promise<AdBlockSignals> => {
   if (typeof window === "undefined" || typeof document === "undefined") {
-    return { baitBlocked: false, localBlockedCount: 0 };
+    return { baitBlockedCount: 0, localBlockedCount: 0, localProbeCount: 0 };
   }
 
-  const baitBlocked = await detectByBait();
-  const localProbeResults = await Promise.all(
-    LOCAL_PROBE_SCRIPT_URLS.map((url) => detectByScriptProbe(url)),
+  const baitBlockedCount = await detectByBait();
+  const availableChecks = await Promise.all(
+    LOCAL_PROBE_SCRIPT_URLS.map(async (url) => (await canReachLocalProbe(url) ? url : null)),
   );
+  const activeProbeUrls = availableChecks.filter((url): url is string => Boolean(url));
+
+  const localProbeResults = await Promise.all(activeProbeUrls.map((url) => detectByScriptProbe(url)));
 
   return {
-    baitBlocked,
+    baitBlockedCount,
     localBlockedCount: localProbeResults.filter(Boolean).length,
+    localProbeCount: activeProbeUrls.length,
   };
+};
+
+const getScriptBlockedThreshold = (probeCount: number): number =>
+  Math.max(SCRIPT_PROBE_BLOCKED_THRESHOLD, Math.ceil(probeCount * 0.75));
+
+const isScriptSignalBlocked = (signals: AdBlockSignals): boolean => {
+  if (signals.localProbeCount < SCRIPT_PROBE_MINIMUM_COUNT) return false;
+  return signals.localBlockedCount >= getScriptBlockedThreshold(signals.localProbeCount);
 };
 
 const detectAdBlock = async (): Promise<boolean> => {
@@ -125,16 +164,16 @@ const detectAdBlock = async (): Promise<boolean> => {
   if (document.visibilityState !== "visible") return false;
 
   const initialSignals = await detectAdBlockSignals();
-  if (initialSignals.baitBlocked) return true;
-  if (initialSignals.localBlockedCount < SCRIPT_PROBE_BLOCKED_THRESHOLD) return false;
+  if (initialSignals.baitBlockedCount >= BAIT_BLOCKED_THRESHOLD) return true;
+  if (!isScriptSignalBlocked(initialSignals)) return false;
 
   await wait(SCRIPT_CONFIRM_DELAY_MS);
   if (document.visibilityState !== "visible") return false;
 
   const confirmedSignals = await detectAdBlockSignals();
   return (
-    confirmedSignals.baitBlocked ||
-    confirmedSignals.localBlockedCount >= SCRIPT_PROBE_BLOCKED_THRESHOLD
+    confirmedSignals.baitBlockedCount >= BAIT_BLOCKED_THRESHOLD ||
+    isScriptSignalBlocked(confirmedSignals)
   );
 };
 
@@ -152,6 +191,8 @@ const useAdBlockDetector = () => {
       try {
         const blocked = await detectAdBlock();
         if (!disposed) setIsAdBlockDetected(blocked);
+      } catch {
+        if (!disposed) setIsAdBlockDetected(false);
       } finally {
         if (!disposed) setIsChecking(false);
       }

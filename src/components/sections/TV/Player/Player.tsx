@@ -12,6 +12,7 @@ import { ADS_WARNING_STORAGE_KEY, SpacingClasses } from "@/utils/constants";
 import { usePlayerEvents } from "@/hooks/usePlayerEvents";
 import useAdBlockDetector from "@/hooks/useAdBlockDetector";
 import useSupabaseUser from "@/hooks/useSupabaseUser";
+import { isPremiumUser } from "@/utils/billing/premium";
 const AdsWarning = dynamic(() => import("@/components/ui/overlay/AdsWarning"));
 const PlayerAccessNotice = dynamic(() => import("@/components/ui/overlay/PlayerAccessNotice"));
 const HlsJsonPlayer = dynamic(() => import("@/components/ui/player/HlsJsonPlayer"));
@@ -46,6 +47,7 @@ const TvShowPlayer: React.FC<TvShowPlayerProps> = ({
 
   const { data: user, isLoading: isUserLoading } = useSupabaseUser();
   const { isAdBlockDetected, isChecking: isAdBlockChecking } = useAdBlockDetector();
+  const isPremium = isPremiumUser(user);
 
   const { mobile } = useBreakpoints();
   const allPlayers = useMemo(
@@ -53,15 +55,17 @@ const TvShowPlayer: React.FC<TvShowPlayerProps> = ({
     [episode.episode_number, episode.season_number, id, startAt],
   );
   const canUse321Player =
-    Boolean(user) && !isUserLoading && !isAdBlockChecking && !isAdBlockDetected;
+    Boolean(user) &&
+    !isUserLoading &&
+    (isPremium || (!isAdBlockChecking && !isAdBlockDetected));
   const missing321Requirements = useMemo(() => {
     if (isUserLoading || isAdBlockChecking) return [];
 
     const missing: string[] = [];
     if (!user) missing.push("Sign in to your account.");
-    if (isAdBlockDetected) missing.push("Disable your ad blocker for this site.");
+    if (!isPremium && isAdBlockDetected) missing.push("Disable your ad blocker for this site.");
     return missing;
-  }, [isAdBlockChecking, isAdBlockDetected, isUserLoading, user]);
+  }, [isAdBlockChecking, isAdBlockDetected, isPremium, isUserLoading, user]);
   const players = useMemo(() => {
     if (canUse321Player) return allPlayers;
 
