@@ -273,6 +273,7 @@ const TvShowPlayer: React.FC<TvShowPlayerProps> = ({
                 playlistUrl={PLAYER.source}
                 mediaId={id}
                 mediaType="tv"
+                disableVastAds={isPremium}
                 season={episode.season_number}
                 episode={episode.episode_number}
                 startAt={startAt}

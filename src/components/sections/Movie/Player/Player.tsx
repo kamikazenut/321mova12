@@ -117,6 +117,7 @@ const MoviePlayer: React.FC<MoviePlayerProps> = ({ movie, startAt }) => {
                 playlistUrl={PLAYER.source}
                 mediaId={movie.id}
                 mediaType="movie"
+                disableVastAds={isPremium}
                 startAt={startAt}
                 onFatalError={handlePrimaryPlayerError}
                 className="z-10 h-full"

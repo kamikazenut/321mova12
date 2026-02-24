@@ -36,6 +36,7 @@ interface HlsJsonPlayerProps {
   onFatalError?: (message: string) => void;
   showFloatingSourceButton?: boolean;
   openSourceMenuSignal?: number;
+  disableVastAds?: boolean;
 }
 
 interface StreamSourceOption {
@@ -266,6 +267,7 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
   onFatalError,
   showFloatingSourceButton = false,
   openSourceMenuSignal,
+  disableVastAds = false,
 }) => {
   const [availableSources, setAvailableSources] = useState<StreamSourceOption[]>([]);
   const [activeSourceIndex, setActiveSourceIndex] = useState(0);
@@ -474,7 +476,7 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
     midrollAdRef.current = null;
     setActiveAd(null);
 
-    if (!streamUrl) return;
+    if (!streamUrl || disableVastAds) return;
 
     let disposed = false;
 
@@ -490,12 +492,23 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
     return () => {
       disposed = true;
     };
-  }, [streamUrl]);
+  }, [disableVastAds, streamUrl]);
 
   useEffect(() => {
     if (!openSourceMenuSignal) return;
     setIsSourceDialogOpen(true);
   }, [openSourceMenuSignal]);
+
+  useEffect(() => {
+    if (!disableVastAds) return;
+
+    prerollAdRef.current = null;
+    midrollAdRef.current = null;
+
+    if (isAdPlayingRef.current) {
+      finishAdBreak();
+    }
+  }, [disableVastAds, finishAdBreak]);
 
   useEffect(() => {
     if (!isSourceDialogOpen) return;
@@ -599,6 +612,7 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
     setError(null);
 
     const maybeStartPreroll = () => {
+      if (disableVastAds) return false;
       if (hasPrerollPlayedRef.current) return false;
       hasPrerollPlayedRef.current = true;
 
@@ -617,6 +631,7 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
     };
 
     const maybeStartMidroll = () => {
+      if (disableVastAds) return false;
       if (hasMidrollPlayedRef.current) return false;
 
       const duration = getPlayerDuration(playerElement);
@@ -722,6 +737,7 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
   }, [
     activeSourceIndex,
     availableSources.length,
+    disableVastAds,
     emitPlayerEvent,
     normalizedStartAt,
     pauseMainPlayback,
