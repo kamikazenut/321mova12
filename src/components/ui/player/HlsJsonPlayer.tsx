@@ -50,6 +50,25 @@ interface OpukSecureStreamResponse {
   secureUrl?: string;
 }
 
+type AdSlot = "preroll" | "midroll";
+
+interface VastAdPayload {
+  enabled?: boolean;
+  slot?: AdSlot;
+  mediaUrl?: string;
+  clickThroughUrl?: string;
+  durationSeconds?: number;
+  skipOffsetSeconds?: number;
+}
+
+interface ActiveVastAd {
+  slot: AdSlot;
+  mediaUrl: string;
+  clickThroughUrl?: string;
+  durationSeconds?: number;
+  skipOffsetSeconds?: number;
+}
+
 let vidstackElementsPromise: Promise<void> | null = null;
 
 const ensureVidstackElements = (): Promise<void> => {
@@ -68,6 +87,7 @@ const OPUK_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
 const OPUK_CITY_LABEL = "Amsterdam";
 const OPUK_CITY_PROVIDER = "amsterdam";
+const VAST_REQUEST_TIMEOUT_MS = 8000;
 
 const pickHlsSources = (payload: PlaylistResponse): StreamSourceOption[] => {
   if (!Array.isArray(payload.playlist)) return [];
@@ -165,6 +185,9 @@ const fetchOpukSource = async (
 interface PlayerElementLike extends HTMLElement {
   currentTime?: number;
   duration?: number;
+  paused?: boolean;
+  play?: () => Promise<void> | void;
+  pause?: () => void;
 }
 
 type VideoWithCastSupport = HTMLVideoElement & {
@@ -193,6 +216,45 @@ const setPlayerCurrentTime = (player: HTMLElement, time: number): void => {
   (player as PlayerElementLike).currentTime = time;
 };
 
+const fetchVastAd = async (slot: AdSlot): Promise<ActiveVastAd | null> => {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), VAST_REQUEST_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(`/api/player/vast?slot=${slot}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+
+    if (!response.ok) return null;
+
+    const payload = (await response.json()) as VastAdPayload;
+    if (!payload?.enabled) return null;
+    if (typeof payload.mediaUrl !== "string" || payload.mediaUrl.trim().length === 0) return null;
+
+    return {
+      slot,
+      mediaUrl: payload.mediaUrl.trim(),
+      clickThroughUrl:
+        typeof payload.clickThroughUrl === "string" && payload.clickThroughUrl.trim().length > 0
+          ? payload.clickThroughUrl.trim()
+          : undefined,
+      durationSeconds:
+        typeof payload.durationSeconds === "number" && Number.isFinite(payload.durationSeconds)
+          ? Math.max(0, payload.durationSeconds)
+          : undefined,
+      skipOffsetSeconds:
+        typeof payload.skipOffsetSeconds === "number" && Number.isFinite(payload.skipOffsetSeconds)
+          ? Math.max(0, payload.skipOffsetSeconds)
+          : undefined,
+    };
+  } catch {
+    return null;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+};
+
 const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
   playlistUrl,
   mediaId,
@@ -212,7 +274,18 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [isVidstackReady, setIsVidstackReady] = useState(false);
   const [playerElement, setPlayerElement] = useState<HTMLElement | null>(null);
+  const [activeAd, setActiveAd] = useState<ActiveVastAd | null>(null);
+  const [adSkipRemaining, setAdSkipRemaining] = useState<number | null>(null);
 
+  const adVideoRef = useRef<HTMLVideoElement | null>(null);
+  const activeAdRef = useRef<ActiveVastAd | null>(null);
+  const prerollAdRef = useRef<ActiveVastAd | null>(null);
+  const midrollAdRef = useRef<ActiveVastAd | null>(null);
+  const hasPrerollPlayedRef = useRef(false);
+  const hasMidrollPlayedRef = useRef(false);
+  const isAdPlayingRef = useRef(false);
+  const resumeMainAfterAdRef = useRef(false);
+  const resumeContentTimeRef = useRef<number | null>(null);
   const hasReportedErrorRef = useRef(false);
   const hasAppliedStartAtRef = useRef(false);
 
@@ -226,6 +299,11 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
   );
   const canSwitchSources = availableSources.length > 1;
   const activeSource = availableSources[activeSourceIndex];
+  const canSkipAd = typeof adSkipRemaining === "number" && adSkipRemaining <= 0;
+
+  useEffect(() => {
+    activeAdRef.current = activeAd;
+  }, [activeAd]);
 
   const reportFatalError = useCallback(
     (message: string) => {
@@ -237,6 +315,75 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
     },
     [onFatalError],
   );
+
+  const pauseMainPlayback = useCallback((player: HTMLElement | null) => {
+    if (!player) return;
+
+    try {
+      (player as PlayerElementLike).pause?.();
+    } catch {}
+  }, []);
+
+  const resumeMainPlayback = useCallback((player: HTMLElement | null) => {
+    if (!player) return;
+
+    try {
+      const playResult = (player as PlayerElementLike).play?.();
+      if (playResult && typeof (playResult as Promise<void>).catch === "function") {
+        void (playResult as Promise<void>).catch(() => {});
+      }
+    } catch {}
+  }, []);
+
+  const startAdBreak = useCallback(
+    (ad: ActiveVastAd, options?: { resumePlayback?: boolean; resumeTime?: number }) => {
+      if (isAdPlayingRef.current) return false;
+      if (!ad?.mediaUrl) return false;
+
+      isAdPlayingRef.current = true;
+      resumeMainAfterAdRef.current = Boolean(options?.resumePlayback);
+      resumeContentTimeRef.current =
+        typeof options?.resumeTime === "number" && Number.isFinite(options.resumeTime)
+          ? options.resumeTime
+          : null;
+      setAdSkipRemaining(
+        typeof ad.skipOffsetSeconds === "number" && Number.isFinite(ad.skipOffsetSeconds)
+          ? Math.max(0, Math.ceil(ad.skipOffsetSeconds))
+          : null,
+      );
+
+      setActiveAd(ad);
+      return true;
+    },
+    [],
+  );
+
+  const finishAdBreak = useCallback(() => {
+    const currentAd = activeAdRef.current;
+    if (!currentAd) return;
+
+    if (currentAd.slot === "preroll") hasPrerollPlayedRef.current = true;
+    if (currentAd.slot === "midroll") hasMidrollPlayedRef.current = true;
+
+    const shouldResumePlayback = resumeMainAfterAdRef.current;
+    const resumeTime = resumeContentTimeRef.current;
+
+    resumeMainAfterAdRef.current = false;
+    resumeContentTimeRef.current = null;
+    isAdPlayingRef.current = false;
+    setAdSkipRemaining(null);
+    setActiveAd(null);
+
+    if (playerElement && typeof resumeTime === "number" && Number.isFinite(resumeTime)) {
+      try {
+        setPlayerCurrentTime(playerElement, resumeTime);
+      } catch {}
+    }
+
+    if (shouldResumePlayback) {
+      resumeMainPlayback(playerElement);
+    }
+  }, [playerElement, resumeMainPlayback]);
 
   useEffect(() => {
     let disposed = false;
@@ -317,6 +464,35 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
   }, [activeSourceIndex, availableSources.length]);
 
   useEffect(() => {
+    hasPrerollPlayedRef.current = false;
+    hasMidrollPlayedRef.current = false;
+    isAdPlayingRef.current = false;
+    resumeMainAfterAdRef.current = false;
+    resumeContentTimeRef.current = null;
+    setAdSkipRemaining(null);
+    prerollAdRef.current = null;
+    midrollAdRef.current = null;
+    setActiveAd(null);
+
+    if (!streamUrl) return;
+
+    let disposed = false;
+
+    const preloadAds = async () => {
+      const [preroll, midroll] = await Promise.all([fetchVastAd("preroll"), fetchVastAd("midroll")]);
+      if (disposed) return;
+
+      prerollAdRef.current = preroll;
+      midrollAdRef.current = midroll;
+    };
+
+    void preloadAds();
+    return () => {
+      disposed = true;
+    };
+  }, [streamUrl]);
+
+  useEffect(() => {
     if (!openSourceMenuSignal) return;
     setIsSourceDialogOpen(true);
   }, [openSourceMenuSignal]);
@@ -332,6 +508,53 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
   }, [isSourceDialogOpen]);
+
+  useEffect(() => {
+    if (!activeAd) return;
+
+    const adVideo = adVideoRef.current;
+    if (!adVideo) return;
+
+    let disposed = false;
+    const handleComplete = () => {
+      if (disposed) return;
+      finishAdBreak();
+    };
+    const updateSkipCountdown = () => {
+      if (disposed) return;
+      if (typeof activeAd.skipOffsetSeconds !== "number") {
+        setAdSkipRemaining(null);
+        return;
+      }
+
+      const remaining = Math.max(0, Math.ceil(activeAd.skipOffsetSeconds - adVideo.currentTime));
+      setAdSkipRemaining(remaining);
+    };
+
+    adVideo.addEventListener("ended", handleComplete);
+    adVideo.addEventListener("error", handleComplete);
+    adVideo.addEventListener("abort", handleComplete);
+    adVideo.addEventListener("timeupdate", updateSkipCountdown);
+    adVideo.addEventListener("loadedmetadata", updateSkipCountdown);
+    adVideo.addEventListener("durationchange", updateSkipCountdown);
+
+    adVideo.currentTime = 0;
+    updateSkipCountdown();
+    const playPromise = adVideo.play();
+    if (playPromise && typeof playPromise.catch === "function") {
+      void playPromise.catch(handleComplete);
+    }
+
+    return () => {
+      disposed = true;
+      adVideo.removeEventListener("ended", handleComplete);
+      adVideo.removeEventListener("error", handleComplete);
+      adVideo.removeEventListener("abort", handleComplete);
+      adVideo.removeEventListener("timeupdate", updateSkipCountdown);
+      adVideo.removeEventListener("loadedmetadata", updateSkipCountdown);
+      adVideo.removeEventListener("durationchange", updateSkipCountdown);
+    };
+  }, [activeAd, finishAdBreak]);
 
   const switchSource = useCallback(
     (nextIndex: number) => {
@@ -375,11 +598,69 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
 
     setError(null);
 
-    const handlePlay = () => emitPlayerEvent("play", playerElement);
-    const handlePause = () => emitPlayerEvent("pause", playerElement);
-    const handleSeeked = () => emitPlayerEvent("seeked", playerElement);
-    const handleEnded = () => emitPlayerEvent("ended", playerElement);
-    const handleTimeUpdate = () => emitPlayerEvent("timeupdate", playerElement);
+    const maybeStartPreroll = () => {
+      if (hasPrerollPlayedRef.current) return false;
+      hasPrerollPlayedRef.current = true;
+
+      const ad = prerollAdRef.current;
+      if (!ad) return false;
+
+      pauseMainPlayback(playerElement);
+
+      const currentTime = getPlayerCurrentTime(playerElement);
+      const adStarted = startAdBreak(ad, {
+        resumePlayback: true,
+        resumeTime: currentTime > 0 ? currentTime : 0,
+      });
+
+      return adStarted;
+    };
+
+    const maybeStartMidroll = () => {
+      if (hasMidrollPlayedRef.current) return false;
+
+      const duration = getPlayerDuration(playerElement);
+      const currentTime = getPlayerCurrentTime(playerElement);
+      if (!Number.isFinite(duration) || duration <= 0) return false;
+      if (!Number.isFinite(currentTime) || currentTime <= 0) return false;
+      if (currentTime < duration / 2) return false;
+
+      hasMidrollPlayedRef.current = true;
+      const ad = midrollAdRef.current;
+      if (!ad) return false;
+
+      pauseMainPlayback(playerElement);
+
+      const adStarted = startAdBreak(ad, {
+        resumePlayback: true,
+        resumeTime: currentTime,
+      });
+
+      return adStarted;
+    };
+
+    const handlePlay = () => {
+      if (isAdPlayingRef.current) return;
+      if (maybeStartPreroll()) return;
+      emitPlayerEvent("play", playerElement);
+    };
+    const handlePause = () => {
+      if (isAdPlayingRef.current) return;
+      emitPlayerEvent("pause", playerElement);
+    };
+    const handleSeeked = () => {
+      if (isAdPlayingRef.current) return;
+      emitPlayerEvent("seeked", playerElement);
+    };
+    const handleEnded = () => {
+      if (isAdPlayingRef.current) return;
+      emitPlayerEvent("ended", playerElement);
+    };
+    const handleTimeUpdate = () => {
+      if (isAdPlayingRef.current) return;
+      if (maybeStartMidroll()) return;
+      emitPlayerEvent("timeupdate", playerElement);
+    };
     const handleCanPlay = () => {
       if (normalizedStartAt <= 0 || hasAppliedStartAtRef.current) return;
 
@@ -389,6 +670,8 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
       } catch {}
     };
     const handleError = (event: Event) => {
+      if (isAdPlayingRef.current) return;
+
       if (activeSourceIndex + 1 < availableSources.length) {
         switchSource(activeSourceIndex + 1);
         return;
@@ -441,8 +724,10 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
     availableSources.length,
     emitPlayerEvent,
     normalizedStartAt,
+    pauseMainPlayback,
     playerElement,
     reportFatalError,
+    startAdBreak,
     streamUrl,
     switchSource,
   ]);
@@ -639,6 +924,58 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
               })}
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {activeAd ? (
+        <div className="absolute inset-0 z-[10110] flex flex-col bg-black">
+          <video
+            key={`${activeAd.slot}:${activeAd.mediaUrl}`}
+            ref={adVideoRef}
+            src={activeAd.mediaUrl}
+            playsInline
+            preload="auto"
+            className="h-full w-full bg-black object-contain"
+          />
+          <div className="pointer-events-none absolute left-3 top-3 flex items-center gap-2 rounded-md border border-white/20 bg-black/60 px-2 py-1 text-xs font-semibold text-white/90 backdrop-blur-sm">
+            <span>Advertisement</span>
+            <span className="rounded bg-white/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wide">
+              {activeAd.slot}
+            </span>
+          </div>
+          {typeof activeAd.skipOffsetSeconds === "number" ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (!canSkipAd) return;
+                finishAdBreak();
+              }}
+              disabled={!canSkipAd}
+              className={cn(
+                "absolute bottom-3 left-3 z-10 rounded-md border px-2.5 py-1 text-xs font-semibold transition",
+                canSkipAd
+                  ? "border-emerald-300/45 bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/35"
+                  : "cursor-not-allowed border-white/25 bg-black/60 text-white/75",
+              )}
+            >
+              {canSkipAd
+                ? "Skip Ad"
+                : `Skip in ${Math.max(
+                    0,
+                    adSkipRemaining ?? Math.ceil(Math.max(0, activeAd.skipOffsetSeconds)),
+                  )}s`}
+            </button>
+          ) : null}
+          {activeAd.clickThroughUrl ? (
+            <a
+              href={activeAd.clickThroughUrl}
+              target="_blank"
+              rel="noopener noreferrer nofollow"
+              className="absolute bottom-3 right-3 rounded-md border border-sky-300/45 bg-sky-500/20 px-2.5 py-1 text-xs font-semibold text-sky-100 transition hover:bg-sky-500/35"
+            >
+              Visit Sponsor
+            </a>
+          ) : null}
         </div>
       ) : null}
 

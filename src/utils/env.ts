@@ -15,6 +15,9 @@ export const env = createEnv({
   server: {
     PROTECTED_PATHS: z.string(),
     SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
+    PLAYER_VAST_URL: optionalUrl,
+    PLAYER_VAST_PREROLL_URL: optionalUrl,
+    PLAYER_VAST_MIDROLL_URL: optionalUrl,
     CARD2CRYPTO_API_BASE_URL: optionalUrl,
     CARD2CRYPTO_API_KEY: optionalNonEmptyString,
     CARD2CRYPTO_WEBHOOK_SECRET: optionalNonEmptyString,
