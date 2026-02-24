@@ -24,6 +24,7 @@ const CITY_SERVER_PROVIDERS = {
   asiacloudHindi: "delhi",
 } as const;
 const REQUEST_TIMEOUT_MS = 12000;
+const SECONDARY_REQUEST_TIMEOUT_MS = 6500;
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
 const DEFAULT_WORKER_PROXY = "https://small-cake-fdee.piracya.workers.dev";
@@ -393,12 +394,16 @@ const fetchCinemaProviderSources = async (
       query.set("episode", requestParams.episode || "");
     }
 
-    const response = await fetch(`${CINEMAOS_API_BASE_URL}?${query.toString()}`, {
-      cache: "no-store",
-      headers: CINEMAOS_HEADERS,
-    });
+    const response = await fetchWithTimeout(
+      `${CINEMAOS_API_BASE_URL}?${query.toString()}`,
+      {
+        cache: "no-store",
+        headers: CINEMAOS_HEADERS,
+      },
+      SECONDARY_REQUEST_TIMEOUT_MS,
+    );
 
-    if (!response.ok) return [];
+    if (!response?.ok) return [];
 
     const payload = (await response.json()) as CinemaProviderResponse;
     if (!Array.isArray(payload?.data?.sources)) return [];
@@ -420,17 +425,21 @@ const getOpukSecureStreamEndpoint = (requestParams: ParsedMediaRequest): string 
 const fetchOpukSecureUrl = async (requestParams: ParsedMediaRequest): Promise<string | null> => {
   try {
     const endpoint = getOpukSecureStreamEndpoint(requestParams);
-    const response = await fetch(endpoint, {
-      cache: "no-store",
-      headers: {
-        "user-agent": USER_AGENT,
-        accept: "application/json, text/plain, */*",
-        referer: OPUK_REFERER,
-        origin: OPUK_ORIGIN,
+    const response = await fetchWithTimeout(
+      endpoint,
+      {
+        cache: "no-store",
+        headers: {
+          "user-agent": USER_AGENT,
+          accept: "application/json, text/plain, */*",
+          referer: OPUK_REFERER,
+          origin: OPUK_ORIGIN,
+        },
       },
-    });
+      SECONDARY_REQUEST_TIMEOUT_MS,
+    );
 
-    if (!response.ok) return null;
+    if (!response?.ok) return null;
 
     const payload = (await response.json()) as OpukSecureStreamResponse;
     if (!payload.success || typeof payload.secureUrl !== "string" || payload.secureUrl.length === 0) {
@@ -454,17 +463,21 @@ const fetchWolfflixStreamUrl = async (requestParams: ParsedMediaRequest): Promis
       query.set("e", requestParams.episode || "");
     }
 
-    const response = await fetch(`${WOLFFLIX_API_BASE_URL}/extract?${query.toString()}`, {
-      cache: "no-store",
-      headers: {
-        "user-agent": USER_AGENT,
-        accept: "application/json, text/plain, */*",
-        referer: WOLFFLIX_REFERER,
-        origin: WOLFFLIX_ORIGIN,
+    const response = await fetchWithTimeout(
+      `${WOLFFLIX_API_BASE_URL}/extract?${query.toString()}`,
+      {
+        cache: "no-store",
+        headers: {
+          "user-agent": USER_AGENT,
+          accept: "application/json, text/plain, */*",
+          referer: WOLFFLIX_REFERER,
+          origin: WOLFFLIX_ORIGIN,
+        },
       },
-    });
+      SECONDARY_REQUEST_TIMEOUT_MS,
+    );
 
-    if (!response.ok) return null;
+    if (!response?.ok) return null;
 
     const payload = (await response.json()) as WolfflixExtractResponse;
     if (!payload.success || typeof payload.streamUrl !== "string" || payload.streamUrl.length === 0) {
@@ -613,6 +626,49 @@ const dedupeSources = (sources: PlaylistSource[]): PlaylistSource[] => {
   });
 };
 
+const fetchWithTimeout = async (
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response | null> => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
+const fetchVixsrcSource = async (pageUrl: string, signal: AbortSignal): Promise<PlaylistSource | null> => {
+  try {
+    const vixsrcResponse = await fetch(pageUrl, {
+      cache: "no-store",
+      signal,
+      headers: {
+        "user-agent": USER_AGENT,
+        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+    });
+
+    if (!vixsrcResponse.ok) return null;
+
+    const html = await vixsrcResponse.text();
+    const masterPlaylistUrl = extractMasterPlaylistUrl(html, pageUrl);
+    if (!masterPlaylistUrl) return null;
+
+    return buildVixsrcSource(masterPlaylistUrl, pageUrl);
+  } catch {
+    return null;
+  }
+};
+
 export const dynamic = "force-dynamic";
 
 export const GET = async (request: NextRequest) => {
@@ -626,29 +682,10 @@ export const GET = async (request: NextRequest) => {
   const timeoutId = setTimeout(() => timeout.abort(), REQUEST_TIMEOUT_MS);
 
   try {
-    let vixsrcSource: PlaylistSource | null = null;
-    try {
-      const vixsrcResponse = await fetch(pageUrl, {
-        cache: "no-store",
-        signal: timeout.signal,
-        headers: {
-          "user-agent": USER_AGENT,
-          accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        },
-      });
-
-      if (vixsrcResponse.ok) {
-        const html = await vixsrcResponse.text();
-        const masterPlaylistUrl = extractMasterPlaylistUrl(html, pageUrl);
-        if (masterPlaylistUrl) {
-          vixsrcSource = buildVixsrcSource(masterPlaylistUrl, pageUrl);
-        }
-      }
-    } catch {
-      // Continue without vixsrc and rely on other providers.
-    }
-
-    const secondarySources = await getSecondarySources(request, requestParams);
+    const [vixsrcSource, secondarySources] = await Promise.all([
+      fetchVixsrcSource(pageUrl, timeout.signal),
+      getSecondarySources(request, requestParams),
+    ]);
     const opukSource =
       secondarySources.find((source) => source.provider === CITY_SERVER_PROVIDERS.opuk) || null;
     const remainingSecondary = secondarySources.filter(

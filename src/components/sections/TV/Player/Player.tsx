@@ -4,8 +4,9 @@ import { getTvShowPlayers } from "@/utils/players";
 import { Card, Skeleton } from "@heroui/react";
 import { useDisclosure, useDocumentTitle, useIdle, useLocalStorage } from "@mantine/hooks";
 import dynamic from "next/dynamic";
+import { useRouter } from "next/navigation";
 import { parseAsInteger, useQueryState } from "nuqs";
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Episode, TvShowDetails } from "tmdb-ts";
 import useBreakpoints from "@/hooks/useBreakpoints";
 import { ADS_WARNING_STORAGE_KEY, SpacingClasses } from "@/utils/constants";
@@ -19,6 +20,10 @@ const HlsJsonPlayer = dynamic(() => import("@/components/ui/player/HlsJsonPlayer
 const TvShowPlayerHeader = dynamic(() => import("./Header"));
 const TvShowPlayerSourceSelection = dynamic(() => import("./SourceSelection"));
 const TvShowPlayerEpisodeSelection = dynamic(() => import("./EpisodeSelection"));
+
+const AUTO_NEXT_STORAGE_KEY = "TV_PLAYER_AUTO_NEXT_ENABLED";
+const AUTO_NEXT_TRIGGER_REMAINING_SECONDS = 90;
+const AUTO_NEXT_FALLBACK_DELAY_SECONDS = 5;
 
 export interface TvShowPlayerProps {
   tv: TvShowDetails;
@@ -40,8 +45,14 @@ const TvShowPlayer: React.FC<TvShowPlayerProps> = ({
   startAt,
   ...props
 }) => {
+  const router = useRouter();
   const [seen] = useLocalStorage<boolean>({
     key: ADS_WARNING_STORAGE_KEY,
+    getInitialValueInEffect: false,
+  });
+  const [isAutoNextEnabled, setIsAutoNextEnabled] = useLocalStorage<boolean>({
+    key: AUTO_NEXT_STORAGE_KEY,
+    defaultValue: true,
     getInitialValueInEffect: false,
   });
 
@@ -82,12 +93,97 @@ const TvShowPlayer: React.FC<TvShowPlayerProps> = ({
     parseAsInteger.withDefault(0),
   );
   const [streamSourceMenuSignal, setStreamSourceMenuSignal] = useState(0);
+  const [autoNextCountdown, setAutoNextCountdown] = useState<number | null>(null);
+  const hasAutoNextNavigatedRef = useRef(false);
+  const autoNextSuppressedRef = useRef(false);
+  const nextEpisodeHrefRef = useRef<string | null>(null);
+  const isAutoNextEnabledRef = useRef(true);
+  const autoNextCountdownRef = useRef<number | null>(null);
+
+  const nextEpisodeHref = useMemo(() => {
+    if (!props.nextEpisodeNumber) return null;
+    return `/tv/${id}/${episode.season_number}/${props.nextEpisodeNumber}/player?src=${selectedSource}`;
+  }, [episode.season_number, id, props.nextEpisodeNumber, selectedSource]);
+
+  const nextEpisodeName = useMemo(() => {
+    if (!props.nextEpisodeNumber) return null;
+    return episodes.find((item) => item.episode_number === props.nextEpisodeNumber)?.name || null;
+  }, [episodes, props.nextEpisodeNumber]);
+
+  useEffect(() => {
+    nextEpisodeHrefRef.current = nextEpisodeHref;
+  }, [nextEpisodeHref]);
+
+  useEffect(() => {
+    isAutoNextEnabledRef.current = Boolean(isAutoNextEnabled);
+  }, [isAutoNextEnabled]);
+
+  useEffect(() => {
+    autoNextCountdownRef.current = autoNextCountdown;
+  }, [autoNextCountdown]);
+
+  const cancelAutoNext = useCallback(() => {
+    autoNextSuppressedRef.current = true;
+    autoNextCountdownRef.current = null;
+    setAutoNextCountdown(null);
+  }, []);
+
+  const goToNextEpisode = useCallback(() => {
+    const href = nextEpisodeHrefRef.current;
+    if (!href) return;
+    if (hasAutoNextNavigatedRef.current) return;
+
+    hasAutoNextNavigatedRef.current = true;
+    autoNextCountdownRef.current = null;
+    setAutoNextCountdown(null);
+    router.push(href);
+  }, [router]);
+
+  const maybeStartAutoNext = useCallback((remainingSeconds?: number) => {
+    if (hasAutoNextNavigatedRef.current) return;
+    if (autoNextSuppressedRef.current) return;
+    if (!isAutoNextEnabledRef.current) return;
+    if (!nextEpisodeHrefRef.current) return;
+    if (autoNextCountdownRef.current !== null) return;
+
+    const rawCountdown =
+      typeof remainingSeconds === "number" && Number.isFinite(remainingSeconds)
+        ? Math.ceil(remainingSeconds)
+        : AUTO_NEXT_FALLBACK_DELAY_SECONDS;
+    const nextCountdown = Math.max(
+      1,
+      Math.min(rawCountdown, AUTO_NEXT_TRIGGER_REMAINING_SECONDS),
+    );
+
+    autoNextCountdownRef.current = nextCountdown;
+    setAutoNextCountdown(nextCountdown);
+  }, []);
 
   usePlayerEvents({
     saveHistory: true,
     trackUiState: false,
     media: { id, type: "tv" },
     metadata: { season: episode.season_number, episode: episode.episode_number },
+    onPlay: cancelAutoNext,
+    onTimeUpdate: (data) => {
+      const duration = Number(data.duration);
+      const currentTime = Number(data.currentTime);
+      if (!Number.isFinite(duration) || duration <= 0) return;
+      if (!Number.isFinite(currentTime) || currentTime < 0) return;
+
+      const remaining = duration - currentTime;
+      if (remaining <= AUTO_NEXT_TRIGGER_REMAINING_SECONDS && remaining > 0) {
+        maybeStartAutoNext(remaining);
+      }
+    },
+    onEnded: () => {
+      if (autoNextCountdownRef.current !== null) {
+        goToNextEpisode();
+        return;
+      }
+
+      maybeStartAutoNext(AUTO_NEXT_FALLBACK_DELAY_SECONDS);
+    },
   });
   useDocumentTitle(
     `Play ${props.seriesName} - ${props.seasonName} - ${episode.name} | ${siteConfig.name}`,
@@ -96,6 +192,38 @@ const TvShowPlayer: React.FC<TvShowPlayerProps> = ({
   useEffect(() => {
     setDismissedPlayerNotice(false);
   }, [missing321Requirements.join("|")]);
+
+  useEffect(() => {
+    hasAutoNextNavigatedRef.current = false;
+    autoNextSuppressedRef.current = false;
+    autoNextCountdownRef.current = null;
+    setAutoNextCountdown(null);
+  }, [episode.episode_number, episode.season_number, id]);
+
+  useEffect(() => {
+    if (autoNextCountdown === null) return;
+    if (!nextEpisodeHref || !isAutoNextEnabled) {
+      autoNextCountdownRef.current = null;
+      setAutoNextCountdown(null);
+      return;
+    }
+
+    if (autoNextCountdown <= 0) {
+      goToNextEpisode();
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setAutoNextCountdown((current) => {
+        if (current === null) return null;
+        return Math.max(current - 1, 0);
+      });
+    }, 1000);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [autoNextCountdown, goToNextEpisode, isAutoNextEnabled, nextEpisodeHref]);
 
   useEffect(() => {
     if (!players.length) return;
@@ -162,6 +290,35 @@ const TvShowPlayer: React.FC<TvShowPlayerProps> = ({
               />
             )
           )}
+
+          {autoNextCountdown !== null && nextEpisodeHref ? (
+            <div className="pointer-events-none absolute inset-x-0 bottom-16 z-[10120] flex justify-center px-3 sm:bottom-20">
+              <div className="pointer-events-auto flex w-full max-w-lg items-center justify-between gap-3 rounded-xl border border-sky-200/35 bg-[#071022]/92 px-3 py-2 text-white shadow-[0_14px_40px_rgba(0,0,0,0.45)] backdrop-blur">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold sm:text-base">Up next in {autoNextCountdown}s</p>
+                  <p className="truncate text-xs text-white/75 sm:text-sm">
+                    {nextEpisodeName || `Episode ${props.nextEpisodeNumber}`}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={cancelAutoNext}
+                    className="rounded-lg border border-white/25 px-2.5 py-1.5 text-xs font-semibold text-white/90 transition hover:bg-white/10"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={goToNextEpisode}
+                    className="rounded-lg border border-sky-300/50 bg-gradient-to-r from-blue-600 to-cyan-500 px-2.5 py-1.5 text-xs font-semibold text-white transition hover:brightness-110"
+                  >
+                    Play Now
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </Card>
       </div>
 

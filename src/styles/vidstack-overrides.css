@@ -1,4 +1,139 @@
-/* 321 player-specific Vidstack overrides. Loaded after Vidstack defaults. */
+/* 321 Player Vidstack theme overrides. Loaded after Vidstack defaults. */
+
+:where(media-player.v321-vidstack-player) {
+  --video-bg: #000;
+  --video-brand: #1e63ff;
+  --video-focus-ring: 0 0 0 3px rgb(56 189 248 / 0.6);
+  --video-border-radius: 0;
+  --video-border: 0;
+  --video-controls-color: #f4f8ff;
+  --video-font-family: var(--font-poppins), "Poppins", sans-serif;
+  --video-time-divider-color: rgb(233 242 255 / 0.85);
+  --video-scrim-bg: linear-gradient(
+    180deg,
+    rgb(2 6 14 / 0.05) 0%,
+    rgb(2 6 14 / 0.55) 58%,
+    rgb(2 6 14 / 0.82) 100%
+  );
+  --media-controls-color: #f4f8ff;
+  --media-button-color: #f4f8ff;
+  --media-button-size: 38px;
+  --media-button-icon-size: 72%;
+  --media-button-border-radius: 10px;
+  --media-button-hover-bg: rgb(30 99 255 / 0.22);
+  --media-button-hover-transform: scale(1.03);
+  --media-button-touch-hover-bg: rgb(30 99 255 / 0.24);
+  --media-time-font-size: 12px;
+  --media-time-font-weight: 600;
+  --media-time-letter-spacing: 0.03em;
+  --media-time-color: #e8f1ff;
+  --media-time-bg: rgb(6 12 24 / 0.6);
+  --media-time-border-radius: 7px;
+  --media-slider-height: 44px;
+  --media-slider-track-height: 4px;
+  --media-slider-focused-track-height: 6px;
+  --media-slider-track-border-radius: 999px;
+  --media-slider-track-bg: rgb(255 255 255 / 0.22);
+  --media-slider-track-fill-bg: #1e63ff;
+  --media-slider-track-progress-bg: rgb(125 211 252 / 0.36);
+  --media-slider-thumb-size: 12px;
+  --media-slider-thumb-border: 1px solid rgb(184 230 255 / 0.75);
+  --media-slider-thumb-bg: #eaf4ff;
+  --media-slider-focused-thumb-shadow: 0 0 0 4px rgb(30 99 255 / 0.34);
+  --media-slider-value-bg: rgb(8 14 26 / 0.95);
+  --media-slider-value-color: #eff6ff;
+  --media-slider-value-border: 1px solid rgb(125 211 252 / 0.35);
+  --media-slider-value-border-radius: 8px;
+  --media-menu-font-size: 14px;
+  --media-menu-font-weight: 600;
+  --media-menu-min-width: 230px;
+  --media-menu-max-height: min(60vh, 360px);
+  --media-menu-x-offset: 0px;
+  --media-menu-y-offset: 8px;
+  --media-menu-padding: 8px;
+  --media-menu-border: 1px solid rgb(125 211 252 / 0.28);
+  --media-menu-bg: rgb(5 10 20 / 0.96);
+  --media-menu-border-radius: 12px;
+  --media-menu-box-shadow: 0 18px 44px rgb(0 0 0 / 0.52);
+  --media-menu-item-padding: 10px 11px;
+  --media-menu-item-border-radius: 9px;
+  --media-menu-item-color: #eef6ff;
+  --media-menu-item-hover-bg: rgb(30 99 255 / 0.28);
+  --media-menu-item-info-color: rgb(200 220 255 / 0.65);
+  --media-menu-hint-color: rgb(200 220 255 / 0.58);
+  --media-menu-divider: 1px solid rgb(125 211 252 / 0.22);
+  --media-menu-top-bar-bg: rgb(5 10 20 / 0.97);
+  --media-menu-scrollbar-track-bg: rgb(255 255 255 / 0.07);
+  --media-menu-scrollbar-thumb-bg: rgb(125 211 252 / 0.32);
+  --media-menu-radio-check-border: 2px solid rgb(220 236 255 / 0.48);
+  --media-menu-radio-check-active-color: #33b7ff;
+  background:
+    radial-gradient(120% 120% at 50% -8%, rgb(30 99 255 / 0.22), transparent 58%),
+    linear-gradient(180deg, #01040a 0%, #02060d 100%);
+}
+
+:where(media-player.v321-vidstack-player media-community-skin[data-video] div[part='controls-group']) {
+  margin-bottom: 0;
+  padding: 4px 8px;
+}
+
+:where(media-player.v321-vidstack-player media-community-skin[data-video] div[part='controls-group']:first-child) {
+  padding-top: 8px;
+}
+
+:where(media-player.v321-vidstack-player media-community-skin[data-video] div[part='controls-group']:last-child) {
+  margin-top: auto;
+  padding: 8px 10px 10px;
+  border-top: 1px solid rgb(255 255 255 / 0.08);
+  background: linear-gradient(180deg, rgb(2 8 20 / 0), rgb(2 8 20 / 0.86) 38%, rgb(2 8 20 / 0.95) 100%);
+}
+
+:where(media-player.v321-vidstack-player [data-media-button]) {
+  border: 1px solid transparent;
+  background: rgb(6 11 22 / 0.42);
+  backdrop-filter: blur(6px);
+  transition:
+    transform 0.2s ease,
+    background-color 0.2s ease,
+    border-color 0.2s ease;
+}
+
+:where(media-player.v321-vidstack-player [data-media-button][data-hover]),
+:where(media-player.v321-vidstack-player [data-media-button][data-focus]),
+:where(media-player.v321-vidstack-player [data-media-button][data-pressed]) {
+  border-color: rgb(125 211 252 / 0.55);
+  background: rgb(30 99 255 / 0.27);
+}
+
+:where(media-player.v321-vidstack-player button[data-local-cast-button='true']) {
+  border-radius: 10px;
+}
+
+:where(media-player.v321-vidstack-player media-time) {
+  padding: 2px 6px;
+}
+
+:where(media-player.v321-vidstack-player media-time-slider [part='track-progress']) {
+  backdrop-filter: blur(4px);
+}
+
+:where(media-player.v321-vidstack-player media-menu[part='settings-menu']) {
+  position: relative;
+  --media-menu-y-offset: 10px;
+}
+
+:where(media-player.v321-vidstack-player media-menu [data-media-menu-items]) {
+  backdrop-filter: blur(14px);
+}
+
+:where(media-player.v321-vidstack-player media-menu [role='menuitemradio'][aria-checked='true']),
+:where(media-player.v321-vidstack-player media-radio[aria-checked='true']) {
+  background: linear-gradient(90deg, rgb(30 99 255 / 0.32), rgb(14 165 233 / 0.26));
+}
+
+:where(media-player.v321-vidstack-player media-menu [part='info']) {
+  font-size: 12px;
+}
 
 :where(media-player.v321-vidstack-player media-outlet) {
   display: flex !important;
@@ -6,7 +141,7 @@
   justify-content: center !important;
   height: 100% !important;
   overflow: hidden !important;
-  background: black !important;
+  background: #000 !important;
 }
 
 :where(media-player.v321-vidstack-player media-outlet > shadow-root),
@@ -22,4 +157,33 @@
   height: 100% !important;
   object-fit: contain !important;
   object-position: center center !important;
+}
+
+@media (max-width: 640px) {
+  :where(media-player.v321-vidstack-player) {
+    --media-button-size: 34px;
+    --media-time-font-size: 11px;
+    --media-menu-min-width: 210px;
+    --media-menu-max-height: min(52vh, 300px);
+    --media-mobile-fullscreen-button-size: 36px;
+  }
+
+  :where(media-player.v321-vidstack-player media-community-skin[data-video] div[part='controls-group']:last-child) {
+    padding: 8px 7px 9px;
+  }
+}
+
+@media (max-width: 430px) {
+  :where(media-player.v321-vidstack-player) {
+    --media-button-size: 32px;
+    --media-slider-thumb-size: 11px;
+    --media-slider-track-height: 3px;
+    --media-slider-focused-track-height: 5px;
+  }
+}
+
+@supports (padding: max(0px)) {
+  :where(media-player.v321-vidstack-player media-community-skin[data-video] div[part='controls-group']:last-child) {
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+  }
 }
