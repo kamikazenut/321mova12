@@ -52,6 +52,17 @@ interface OpukSecureStreamResponse {
 }
 
 type AdSlot = "preroll" | "midroll";
+type VastTrackingEventKey =
+  | "start"
+  | "firstQuartile"
+  | "midpoint"
+  | "thirdQuartile"
+  | "complete"
+  | "skip"
+  | "closeLinear"
+  | "click";
+
+type VastTrackingEventMap = Partial<Record<VastTrackingEventKey, string[]>>;
 
 interface VastAdPayload {
   enabled?: boolean;
@@ -60,6 +71,10 @@ interface VastAdPayload {
   clickThroughUrl?: string;
   durationSeconds?: number;
   skipOffsetSeconds?: number;
+  impressionUrls?: unknown;
+  errorUrls?: unknown;
+  clickTrackingUrls?: unknown;
+  tracking?: unknown;
 }
 
 interface ActiveVastAd {
@@ -68,6 +83,10 @@ interface ActiveVastAd {
   clickThroughUrl?: string;
   durationSeconds?: number;
   skipOffsetSeconds?: number;
+  impressionUrls: string[];
+  errorUrls: string[];
+  clickTrackingUrls: string[];
+  tracking: VastTrackingEventMap;
 }
 
 let vidstackElementsPromise: Promise<void> | null = null;
@@ -89,6 +108,18 @@ const OPUK_USER_AGENT =
 const OPUK_CITY_LABEL = "Amsterdam";
 const OPUK_CITY_PROVIDER = "amsterdam";
 const VAST_REQUEST_TIMEOUT_MS = 8000;
+const VAST_TRACKING_ERROR_PLAYBACK = 405;
+const TRACKING_PIXEL_BUFFER: HTMLImageElement[] = [];
+const VAST_TRACKING_EVENT_KEYS: VastTrackingEventKey[] = [
+  "start",
+  "firstQuartile",
+  "midpoint",
+  "thirdQuartile",
+  "complete",
+  "skip",
+  "closeLinear",
+  "click",
+];
 
 const pickHlsSources = (payload: PlaylistResponse): StreamSourceOption[] => {
   if (!Array.isArray(payload.playlist)) return [];
@@ -217,6 +248,72 @@ const setPlayerCurrentTime = (player: HTMLElement, time: number): void => {
   (player as PlayerElementLike).currentTime = time;
 };
 
+const normalizeTrackingUrls = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+
+  const seen = new Set<string>();
+  const urls: string[] = [];
+
+  for (const raw of value) {
+    if (typeof raw !== "string") continue;
+    const url = raw.trim();
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    urls.push(url);
+  }
+
+  return urls;
+};
+
+const normalizeTrackingMap = (value: unknown): VastTrackingEventMap => {
+  if (!value || typeof value !== "object") return {};
+
+  const record = value as Record<string, unknown>;
+  const tracking: VastTrackingEventMap = {};
+
+  for (const eventKey of VAST_TRACKING_EVENT_KEYS) {
+    const urls = normalizeTrackingUrls(record[eventKey]);
+    if (urls.length) {
+      tracking[eventKey] = urls;
+    }
+  }
+
+  return tracking;
+};
+
+const fireTrackingPixels = (urls: string[], errorCode?: number): void => {
+  if (!urls.length) return;
+
+  for (const baseUrl of urls) {
+    const trackedUrl =
+      typeof errorCode === "number"
+        ? baseUrl.replace(/\[ERRORCODE\]/gi, String(errorCode))
+        : baseUrl;
+    if (!trackedUrl) continue;
+
+    try {
+      const pixel = new Image();
+      const cleanup = () => {
+        const index = TRACKING_PIXEL_BUFFER.indexOf(pixel);
+        if (index >= 0) TRACKING_PIXEL_BUFFER.splice(index, 1);
+      };
+
+      pixel.onload = cleanup;
+      pixel.onerror = cleanup;
+      TRACKING_PIXEL_BUFFER.push(pixel);
+      pixel.src = trackedUrl;
+    } catch {
+      void fetch(trackedUrl, {
+        method: "GET",
+        mode: "no-cors",
+        cache: "no-store",
+        keepalive: true,
+        credentials: "omit",
+      }).catch(() => {});
+    }
+  }
+};
+
 const fetchVastAd = async (slot: AdSlot): Promise<ActiveVastAd | null> => {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), VAST_REQUEST_TIMEOUT_MS);
@@ -248,6 +345,10 @@ const fetchVastAd = async (slot: AdSlot): Promise<ActiveVastAd | null> => {
         typeof payload.skipOffsetSeconds === "number" && Number.isFinite(payload.skipOffsetSeconds)
           ? Math.max(0, payload.skipOffsetSeconds)
           : undefined,
+      impressionUrls: normalizeTrackingUrls(payload.impressionUrls),
+      errorUrls: normalizeTrackingUrls(payload.errorUrls),
+      clickTrackingUrls: normalizeTrackingUrls(payload.clickTrackingUrls),
+      tracking: normalizeTrackingMap(payload.tracking),
     };
   } catch {
     return null;
@@ -288,6 +389,7 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
   const isAdPlayingRef = useRef(false);
   const resumeMainAfterAdRef = useRef(false);
   const resumeContentTimeRef = useRef<number | null>(null);
+  const adEventFiredRef = useRef<Record<string, boolean>>({});
   const hasReportedErrorRef = useRef(false);
   const hasAppliedStartAtRef = useRef(false);
 
@@ -317,6 +419,41 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
     },
     [onFatalError],
   );
+
+  const resetAdTrackingState = useCallback(() => {
+    adEventFiredRef.current = {};
+  }, []);
+
+  const fireAdEventTracking = useCallback((ad: ActiveVastAd | null, eventKey: VastTrackingEventKey) => {
+    if (!ad) return;
+
+    const trackerStateKey = `tracking:${eventKey}`;
+    if (adEventFiredRef.current[trackerStateKey]) return;
+    adEventFiredRef.current[trackerStateKey] = true;
+
+    const urls = ad.tracking[eventKey] || [];
+    fireTrackingPixels(urls);
+  }, []);
+
+  const fireAdImpression = useCallback((ad: ActiveVastAd | null) => {
+    if (!ad) return;
+
+    const trackerStateKey = "impression";
+    if (adEventFiredRef.current[trackerStateKey]) return;
+    adEventFiredRef.current[trackerStateKey] = true;
+
+    fireTrackingPixels(ad.impressionUrls);
+  }, []);
+
+  const fireAdError = useCallback((ad: ActiveVastAd | null, errorCode = VAST_TRACKING_ERROR_PLAYBACK) => {
+    if (!ad) return;
+
+    const trackerStateKey = "error";
+    if (adEventFiredRef.current[trackerStateKey]) return;
+    adEventFiredRef.current[trackerStateKey] = true;
+
+    fireTrackingPixels(ad.errorUrls, errorCode);
+  }, []);
 
   const pauseMainPlayback = useCallback((player: HTMLElement | null) => {
     if (!player) return;
@@ -353,11 +490,12 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
           ? Math.max(0, Math.ceil(ad.skipOffsetSeconds))
           : null,
       );
+      resetAdTrackingState();
 
       setActiveAd(ad);
       return true;
     },
-    [],
+    [resetAdTrackingState],
   );
 
   const finishAdBreak = useCallback(() => {
@@ -373,6 +511,7 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
     resumeMainAfterAdRef.current = false;
     resumeContentTimeRef.current = null;
     isAdPlayingRef.current = false;
+    resetAdTrackingState();
     setAdSkipRemaining(null);
     setActiveAd(null);
 
@@ -385,7 +524,7 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
     if (shouldResumePlayback) {
       resumeMainPlayback(playerElement);
     }
-  }, [playerElement, resumeMainPlayback]);
+  }, [playerElement, resetAdTrackingState, resumeMainPlayback]);
 
   useEffect(() => {
     let disposed = false;
@@ -471,6 +610,7 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
     isAdPlayingRef.current = false;
     resumeMainAfterAdRef.current = false;
     resumeContentTimeRef.current = null;
+    resetAdTrackingState();
     setAdSkipRemaining(null);
     prerollAdRef.current = null;
     midrollAdRef.current = null;
@@ -492,7 +632,7 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
     return () => {
       disposed = true;
     };
-  }, [disableVastAds, streamUrl]);
+  }, [disableVastAds, resetAdTrackingState, streamUrl]);
 
   useEffect(() => {
     if (!openSourceMenuSignal) return;
@@ -529,8 +669,19 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
     if (!adVideo) return;
 
     let disposed = false;
+    const ensureAdStartedTracking = () => {
+      fireAdImpression(activeAd);
+      fireAdEventTracking(activeAd, "start");
+    };
     const handleComplete = () => {
       if (disposed) return;
+      ensureAdStartedTracking();
+      fireAdEventTracking(activeAd, "complete");
+      finishAdBreak();
+    };
+    const handleError = () => {
+      if (disposed) return;
+      fireAdError(activeAd);
       finishAdBreak();
     };
     const updateSkipCountdown = () => {
@@ -543,31 +694,58 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
       const remaining = Math.max(0, Math.ceil(activeAd.skipOffsetSeconds - adVideo.currentTime));
       setAdSkipRemaining(remaining);
     };
+    const updateQuartileTracking = () => {
+      const duration =
+        (Number.isFinite(adVideo.duration) && adVideo.duration > 0 ? adVideo.duration : undefined) ??
+        (typeof activeAd.durationSeconds === "number" && activeAd.durationSeconds > 0
+          ? activeAd.durationSeconds
+          : undefined);
+      if (!duration) return;
+
+      const progress = adVideo.currentTime / duration;
+      if (!Number.isFinite(progress) || progress <= 0) return;
+
+      if (progress >= 0.25) fireAdEventTracking(activeAd, "firstQuartile");
+      if (progress >= 0.5) fireAdEventTracking(activeAd, "midpoint");
+      if (progress >= 0.75) fireAdEventTracking(activeAd, "thirdQuartile");
+    };
+    const handleTimeUpdate = () => {
+      if (disposed) return;
+      ensureAdStartedTracking();
+      updateSkipCountdown();
+      updateQuartileTracking();
+    };
+    const handlePlaying = () => {
+      if (disposed) return;
+      ensureAdStartedTracking();
+    };
 
     adVideo.addEventListener("ended", handleComplete);
-    adVideo.addEventListener("error", handleComplete);
-    adVideo.addEventListener("abort", handleComplete);
-    adVideo.addEventListener("timeupdate", updateSkipCountdown);
-    adVideo.addEventListener("loadedmetadata", updateSkipCountdown);
-    adVideo.addEventListener("durationchange", updateSkipCountdown);
+    adVideo.addEventListener("error", handleError);
+    adVideo.addEventListener("abort", handleError);
+    adVideo.addEventListener("playing", handlePlaying);
+    adVideo.addEventListener("timeupdate", handleTimeUpdate);
+    adVideo.addEventListener("loadedmetadata", handleTimeUpdate);
+    adVideo.addEventListener("durationchange", handleTimeUpdate);
 
     adVideo.currentTime = 0;
-    updateSkipCountdown();
+    handleTimeUpdate();
     const playPromise = adVideo.play();
     if (playPromise && typeof playPromise.catch === "function") {
-      void playPromise.catch(handleComplete);
+      void playPromise.catch(handleError);
     }
 
     return () => {
       disposed = true;
       adVideo.removeEventListener("ended", handleComplete);
-      adVideo.removeEventListener("error", handleComplete);
-      adVideo.removeEventListener("abort", handleComplete);
-      adVideo.removeEventListener("timeupdate", updateSkipCountdown);
-      adVideo.removeEventListener("loadedmetadata", updateSkipCountdown);
-      adVideo.removeEventListener("durationchange", updateSkipCountdown);
+      adVideo.removeEventListener("error", handleError);
+      adVideo.removeEventListener("abort", handleError);
+      adVideo.removeEventListener("playing", handlePlaying);
+      adVideo.removeEventListener("timeupdate", handleTimeUpdate);
+      adVideo.removeEventListener("loadedmetadata", handleTimeUpdate);
+      adVideo.removeEventListener("durationchange", handleTimeUpdate);
     };
-  }, [activeAd, finishAdBreak]);
+  }, [activeAd, fireAdError, fireAdEventTracking, fireAdImpression, finishAdBreak]);
 
   const switchSource = useCallback(
     (nextIndex: number) => {
@@ -964,6 +1142,8 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
               type="button"
               onClick={() => {
                 if (!canSkipAd) return;
+                fireAdEventTracking(activeAd, "skip");
+                fireAdEventTracking(activeAd, "closeLinear");
                 finishAdBreak();
               }}
               disabled={!canSkipAd}
@@ -987,6 +1167,10 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
               href={activeAd.clickThroughUrl}
               target="_blank"
               rel="noopener noreferrer nofollow"
+              onClick={() => {
+                fireTrackingPixels(activeAd.clickTrackingUrls);
+                fireAdEventTracking(activeAd, "click");
+              }}
               className="absolute bottom-3 right-3 rounded-md border border-sky-300/45 bg-sky-500/20 px-2.5 py-1 text-xs font-semibold text-sky-100 transition hover:bg-sky-500/35"
             >
               Visit Sponsor

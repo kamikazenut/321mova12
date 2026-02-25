@@ -11,12 +11,27 @@ const MEDIA_TYPE_PRIORITY = [
 ] as const;
 
 type AdSlot = "preroll" | "midroll";
+type TrackingEventKey =
+  | "start"
+  | "firstQuartile"
+  | "midpoint"
+  | "thirdQuartile"
+  | "complete"
+  | "skip"
+  | "closeLinear"
+  | "click";
+
+type TrackingEventMap = Partial<Record<TrackingEventKey, string[]>>;
 
 interface ResolvedVastAd {
   mediaUrl: string;
   clickThroughUrl?: string;
   durationSeconds?: number;
   skipOffsetSeconds?: number;
+  impressionUrls?: string[];
+  errorUrls?: string[];
+  clickTrackingUrls?: string[];
+  tracking?: TrackingEventMap;
 }
 
 interface MediaCandidate {
@@ -31,6 +46,13 @@ interface VastRequestHeaders {
   origin?: string;
   referer?: string;
   userAgent?: string;
+}
+
+interface VastTrackingData {
+  impressionUrls: string[];
+  errorUrls: string[];
+  clickTrackingUrls: string[];
+  tracking: TrackingEventMap;
 }
 
 const decodeXmlEntities = (value: string): string =>
@@ -127,6 +149,19 @@ const extractTagValues = (xml: string, tagName: string): string[] => {
   return values;
 };
 
+const dedupeUrls = (urls: string[]): string[] => {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const url of urls) {
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    result.push(url);
+  }
+
+  return result;
+};
+
 const parseAttributes = (rawAttributes: string): Record<string, string> => {
   const attributes: Record<string, string> = {};
   const attrPattern = /([a-zA-Z0-9:_-]+)\s*=\s*["']([^"']+)["']/g;
@@ -137,6 +172,89 @@ const parseAttributes = (rawAttributes: string): Record<string, string> => {
   }
 
   return attributes;
+};
+
+const normalizeTrackingEventName = (eventName: string): TrackingEventKey | null => {
+  const normalized = eventName.trim().toLowerCase();
+  if (!normalized) return null;
+
+  if (normalized === "start") return "start";
+  if (normalized === "firstquartile") return "firstQuartile";
+  if (normalized === "midpoint") return "midpoint";
+  if (normalized === "thirdquartile") return "thirdQuartile";
+  if (normalized === "complete") return "complete";
+  if (normalized === "skip") return "skip";
+  if (normalized === "closelinear") return "closeLinear";
+  if (normalized === "click") return "click";
+  return null;
+};
+
+const extractTrackingEvents = (xml: string, baseUrl: string): TrackingEventMap => {
+  const pattern = /<Tracking\b([^>]*)>([\s\S]*?)<\/Tracking>/gi;
+  const tracking: TrackingEventMap = {};
+  let match: RegExpExecArray | null = null;
+
+  while ((match = pattern.exec(xml)) !== null) {
+    const attributes = parseAttributes(match[1] || "");
+    const eventKey = normalizeTrackingEventName(attributes.event || "");
+    if (!eventKey) continue;
+
+    const rawUrl = sanitizeXmlValue(match[2] || "");
+    if (!rawUrl) continue;
+
+    const resolvedUrl = resolveUrl(rawUrl, baseUrl);
+    const current = tracking[eventKey] ?? [];
+    current.push(resolvedUrl);
+    tracking[eventKey] = current;
+  }
+
+  for (const key of Object.keys(tracking) as TrackingEventKey[]) {
+    tracking[key] = dedupeUrls(tracking[key] || []);
+  }
+
+  return tracking;
+};
+
+const mergeTrackingMaps = (base: TrackingEventMap, extra: TrackingEventMap): TrackingEventMap => {
+  const merged: TrackingEventMap = { ...base };
+
+  const keys = new Set<TrackingEventKey>([
+    ...(Object.keys(base) as TrackingEventKey[]),
+    ...(Object.keys(extra) as TrackingEventKey[]),
+  ]);
+
+  for (const key of keys) {
+    const urls = dedupeUrls([...(base[key] || []), ...(extra[key] || [])]);
+    if (urls.length) merged[key] = urls;
+  }
+
+  return merged;
+};
+
+const extractVastTrackingData = (xml: string, baseUrl: string): VastTrackingData => {
+  const impressionUrls = dedupeUrls(
+    extractTagValues(xml, "Impression")
+      .map((url) => resolveUrl(url, baseUrl))
+      .filter((url) => url.length > 0),
+  );
+  const errorUrls = dedupeUrls(
+    extractTagValues(xml, "Error")
+      .map((url) => resolveUrl(url, baseUrl))
+      .filter((url) => url.length > 0),
+  );
+  const clickTrackingUrls = dedupeUrls(
+    extractTagValues(xml, "ClickTracking")
+      .map((url) => resolveUrl(url, baseUrl))
+      .filter((url) => url.length > 0),
+  );
+  const tracking = extractTrackingEvents(xml, baseUrl);
+
+  return {
+    impressionUrls,
+    errorUrls,
+    clickTrackingUrls,
+    tracking,
+  };
 };
 
 const extractSkipOffsetSeconds = (xml: string, durationSeconds?: number): number | undefined => {
@@ -250,6 +368,8 @@ const resolveVastAd = async (
   const xml = await fetchTextWithTimeout(sourceUrl, requestHeaders);
   if (!xml || xml.trim().length === 0) return null;
 
+  const trackingData = extractVastTrackingData(xml, sourceUrl);
+
   const mediaUrl = pickBestMediaUrl(xml, sourceUrl);
   if (mediaUrl) {
     const clickThrough = extractTagValues(xml, "ClickThrough")[0];
@@ -261,6 +381,10 @@ const resolveVastAd = async (
       clickThroughUrl: clickThrough ? resolveUrl(clickThrough, sourceUrl) : undefined,
       durationSeconds,
       skipOffsetSeconds,
+      impressionUrls: trackingData.impressionUrls,
+      errorUrls: trackingData.errorUrls,
+      clickTrackingUrls: trackingData.clickTrackingUrls,
+      tracking: trackingData.tracking,
     };
   }
 
@@ -270,7 +394,21 @@ const resolveVastAd = async (
 
   for (const wrapperUrl of wrapperUrls) {
     const resolved = await resolveVastAd(wrapperUrl, depth + 1, requestHeaders);
-    if (resolved) return resolved;
+    if (resolved) {
+      return {
+        ...resolved,
+        impressionUrls: dedupeUrls([
+          ...(trackingData.impressionUrls || []),
+          ...(resolved.impressionUrls || []),
+        ]),
+        errorUrls: dedupeUrls([...(trackingData.errorUrls || []), ...(resolved.errorUrls || [])]),
+        clickTrackingUrls: dedupeUrls([
+          ...(trackingData.clickTrackingUrls || []),
+          ...(resolved.clickTrackingUrls || []),
+        ]),
+        tracking: mergeTrackingMaps(trackingData.tracking, resolved.tracking || {}),
+      };
+    }
   }
 
   return null;
@@ -325,6 +463,10 @@ export const GET = async (request: NextRequest) => {
       clickThroughUrl: resolved.clickThroughUrl,
       durationSeconds: resolved.durationSeconds,
       skipOffsetSeconds: resolved.skipOffsetSeconds,
+      impressionUrls: resolved.impressionUrls || [],
+      errorUrls: resolved.errorUrls || [],
+      clickTrackingUrls: resolved.clickTrackingUrls || [],
+      tracking: resolved.tracking || {},
     },
     {
       headers: {
