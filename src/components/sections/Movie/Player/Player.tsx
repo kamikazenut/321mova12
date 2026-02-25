@@ -11,7 +11,6 @@ import { parseAsInteger, useQueryState } from "nuqs";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { MovieDetails } from "tmdb-ts/dist/types/movies";
 import { usePlayerEvents } from "@/hooks/usePlayerEvents";
-import useAdBlockDetector from "@/hooks/useAdBlockDetector";
 import useSupabaseUser from "@/hooks/useSupabaseUser";
 import { isPremiumUser } from "@/utils/billing/premium";
 const AdsWarning = dynamic(() => import("@/components/ui/overlay/AdsWarning"));
@@ -31,23 +30,25 @@ const MoviePlayer: React.FC<MoviePlayerProps> = ({ movie, startAt }) => {
     getInitialValueInEffect: false,
   });
 
-  const { data: user, isLoading: isUserLoading } = useSupabaseUser();
-  const { isAdBlockDetected, isChecking: isAdBlockChecking } = useAdBlockDetector();
+  const { data: user } = useSupabaseUser();
   const isPremium = isPremiumUser(user);
 
   const allPlayers = useMemo(() => getMoviePlayers(movie.id, startAt), [movie.id, startAt]);
-  const canUse321Player =
-    Boolean(user) &&
-    !isUserLoading &&
-    (isPremium || (!isAdBlockChecking && !isAdBlockDetected));
-  const missing321Requirements = useMemo(() => {
-    if (isUserLoading || isAdBlockChecking) return [];
-
-    const missing: string[] = [];
-    if (!user) missing.push("Sign in to your account.");
-    if (!isPremium && isAdBlockDetected) missing.push("Disable your ad blocker for this site.");
-    return missing;
-  }, [isAdBlockChecking, isAdBlockDetected, isPremium, isUserLoading, user]);
+  // const { isAdBlockDetected, isChecking: isAdBlockChecking } = useAdBlockDetector();
+  // const canUse321Player =
+  //   Boolean(user) &&
+  //   !isUserLoading &&
+  //   (isPremium || (!isAdBlockChecking && !isAdBlockDetected));
+  // const missing321Requirements = useMemo(() => {
+  //   if (isUserLoading || isAdBlockChecking) return [];
+  //   const missing: string[] = [];
+  //   if (!user) missing.push("Sign in to your account.");
+  //   if (!isPremium && isAdBlockDetected) missing.push("Disable your ad blocker for this site.");
+  //   return missing;
+  // }, [isAdBlockChecking, isAdBlockDetected, isPremium, isUserLoading, user]);
+  // TEMP: bypass 321 player requirements (sign-in + adblock) until re-enabled.
+  const canUse321Player = true;
+  const missing321Requirements = useMemo(() => [] as string[], []);
   const players = useMemo(() => {
     if (canUse321Player) return allPlayers;
 
