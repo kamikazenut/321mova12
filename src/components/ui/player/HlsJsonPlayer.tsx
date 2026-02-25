@@ -108,6 +108,7 @@ const OPUK_USER_AGENT =
 const OPUK_CITY_LABEL = "Amsterdam";
 const OPUK_CITY_PROVIDER = "amsterdam";
 const VAST_REQUEST_TIMEOUT_MS = 8000;
+const VAST_MAX_WRAPPER_DEPTH = 3;
 const VAST_TRACKING_ERROR_PLAYBACK = 405;
 const TRACKING_PIXEL_BUFFER: HTMLImageElement[] = [];
 const VAST_TRACKING_EVENT_KEYS: VastTrackingEventKey[] = [
@@ -120,6 +121,12 @@ const VAST_TRACKING_EVENT_KEYS: VastTrackingEventKey[] = [
   "closeLinear",
   "click",
 ];
+const VAST_MEDIA_TYPE_PRIORITY = [
+  "video/mp4",
+  "application/x-mpegurl",
+  "application/vnd.apple.mpegurl",
+  "video/webm",
+] as const;
 
 const pickHlsSources = (payload: PlaylistResponse): StreamSourceOption[] => {
   if (!Array.isArray(payload.playlist)) return [];
@@ -314,11 +321,390 @@ const fireTrackingPixels = (urls: string[], errorCode?: number): void => {
   }
 };
 
+const decodeXmlEntities = (value: string): string =>
+  value
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+
+const sanitizeXmlValue = (value: string): string =>
+  decodeXmlEntities(value.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/gi, "$1")).trim();
+
+const resolveUrl = (value: string, baseUrl: string): string => {
+  try {
+    return new URL(value, baseUrl).toString();
+  } catch {
+    return value;
+  }
+};
+
+const parseClockSeconds = (value?: string): number | undefined => {
+  if (!value) return undefined;
+
+  const normalized = sanitizeXmlValue(value);
+  const match = normalized.match(/^(\d{1,2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?$/);
+  if (!match) return undefined;
+
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const seconds = Number(match[3]);
+  const millis = match[4] ? Number(match[4].padEnd(3, "0")) : 0;
+  if (
+    !Number.isFinite(hours) ||
+    !Number.isFinite(minutes) ||
+    !Number.isFinite(seconds) ||
+    !Number.isFinite(millis)
+  ) {
+    return undefined;
+  }
+
+  return hours * 3600 + minutes * 60 + seconds + millis / 1000;
+};
+
+const parseDurationSeconds = (value?: string): number | undefined => parseClockSeconds(value);
+
+const parseSkipOffsetSeconds = (value: string, durationSeconds?: number): number | undefined => {
+  const normalized = sanitizeXmlValue(value);
+  if (!normalized) return undefined;
+
+  if (normalized.endsWith("%")) {
+    const percent = Number(normalized.slice(0, -1));
+    if (!Number.isFinite(percent) || percent < 0 || percent > 100) return undefined;
+    if (!Number.isFinite(durationSeconds) || !durationSeconds || durationSeconds <= 0) return undefined;
+    return (durationSeconds * percent) / 100;
+  }
+
+  const clockSeconds = parseClockSeconds(normalized);
+  if (typeof clockSeconds === "number" && Number.isFinite(clockSeconds)) {
+    return Math.max(0, clockSeconds);
+  }
+
+  const rawSeconds = Number(normalized);
+  if (Number.isFinite(rawSeconds)) return Math.max(0, rawSeconds);
+
+  return undefined;
+};
+
+const dedupeTrackingUrls = (urls: string[]): string[] => {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const rawUrl of urls) {
+    const url = rawUrl.trim();
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    result.push(url);
+  }
+
+  return result;
+};
+
+const extractTagValues = (xml: string, tagName: string): string[] => {
+  const pattern = new RegExp(`<${tagName}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tagName}>`, "gi");
+  const values: string[] = [];
+  let match: RegExpExecArray | null = null;
+
+  while ((match = pattern.exec(xml)) !== null) {
+    const value = sanitizeXmlValue(match[1] || "");
+    if (value.length > 0) values.push(value);
+  }
+
+  return values;
+};
+
+const parseAttributes = (rawAttributes: string): Record<string, string> => {
+  const attributes: Record<string, string> = {};
+  const attrPattern = /([a-zA-Z0-9:_-]+)\s*=\s*["']([^"']+)["']/g;
+  let match: RegExpExecArray | null = null;
+
+  while ((match = attrPattern.exec(rawAttributes)) !== null) {
+    attributes[match[1].toLowerCase()] = match[2];
+  }
+
+  return attributes;
+};
+
+const normalizeTrackingEventName = (eventName: string): VastTrackingEventKey | null => {
+  const normalized = eventName.trim().toLowerCase();
+  if (!normalized) return null;
+
+  if (normalized === "start") return "start";
+  if (normalized === "firstquartile") return "firstQuartile";
+  if (normalized === "midpoint") return "midpoint";
+  if (normalized === "thirdquartile") return "thirdQuartile";
+  if (normalized === "complete") return "complete";
+  if (normalized === "skip") return "skip";
+  if (normalized === "closelinear") return "closeLinear";
+  if (normalized === "click") return "click";
+  return null;
+};
+
+const extractTrackingEvents = (xml: string, baseUrl: string): VastTrackingEventMap => {
+  const pattern = /<Tracking\b([^>]*)>([\s\S]*?)<\/Tracking>/gi;
+  const tracking: VastTrackingEventMap = {};
+  let match: RegExpExecArray | null = null;
+
+  while ((match = pattern.exec(xml)) !== null) {
+    const attributes = parseAttributes(match[1] || "");
+    const eventKey = normalizeTrackingEventName(attributes.event || "");
+    if (!eventKey) continue;
+
+    const rawUrl = sanitizeXmlValue(match[2] || "");
+    if (!rawUrl) continue;
+
+    const resolvedUrl = resolveUrl(rawUrl, baseUrl);
+    const current = tracking[eventKey] ?? [];
+    current.push(resolvedUrl);
+    tracking[eventKey] = current;
+  }
+
+  for (const key of Object.keys(tracking) as VastTrackingEventKey[]) {
+    tracking[key] = dedupeTrackingUrls(tracking[key] || []);
+  }
+
+  return tracking;
+};
+
+const mergeTrackingMaps = (base: VastTrackingEventMap, extra: VastTrackingEventMap): VastTrackingEventMap => {
+  const merged: VastTrackingEventMap = { ...base };
+  const keys = new Set<VastTrackingEventKey>([
+    ...(Object.keys(base) as VastTrackingEventKey[]),
+    ...(Object.keys(extra) as VastTrackingEventKey[]),
+  ]);
+
+  for (const key of keys) {
+    const urls = dedupeTrackingUrls([...(base[key] || []), ...(extra[key] || [])]);
+    if (urls.length) merged[key] = urls;
+  }
+
+  return merged;
+};
+
+interface MediaCandidate {
+  url: string;
+  type?: string;
+  bitrate?: number;
+  width?: number;
+  height?: number;
+}
+
+const extractMediaCandidates = (xml: string, baseUrl: string): MediaCandidate[] => {
+  const pattern = /<MediaFile\b([^>]*)>([\s\S]*?)<\/MediaFile>/gi;
+  const candidates: MediaCandidate[] = [];
+  let match: RegExpExecArray | null = null;
+
+  while ((match = pattern.exec(xml)) !== null) {
+    const attributes = parseAttributes(match[1] || "");
+    const rawUrl = sanitizeXmlValue(match[2] || "");
+    if (!rawUrl) continue;
+
+    candidates.push({
+      url: resolveUrl(rawUrl, baseUrl),
+      type: attributes.type?.toLowerCase(),
+      bitrate: Number(attributes.bitrate || attributes.minbitrate || 0) || undefined,
+      width: Number(attributes.width || 0) || undefined,
+      height: Number(attributes.height || 0) || undefined,
+    });
+  }
+
+  return candidates;
+};
+
+const rankMediaCandidate = (candidate: MediaCandidate): number => {
+  let score = 0;
+
+  const type = candidate.type?.toLowerCase();
+  if (type) {
+    const exactTypeIndex = VAST_MEDIA_TYPE_PRIORITY.indexOf(
+      type as (typeof VAST_MEDIA_TYPE_PRIORITY)[number],
+    );
+    if (exactTypeIndex >= 0) score += 200 - exactTypeIndex * 20;
+    if (type.includes("mp4")) score += 20;
+    if (type.includes("mpegurl")) score += 15;
+  }
+
+  if (candidate.url.toLowerCase().includes(".mp4")) score += 20;
+  if (candidate.url.toLowerCase().includes(".m3u8")) score += 15;
+  if (typeof candidate.bitrate === "number") score += Math.min(candidate.bitrate / 100, 20);
+  if (typeof candidate.width === "number" && typeof candidate.height === "number") {
+    score += Math.min((candidate.width * candidate.height) / 100000, 15);
+  }
+
+  return score;
+};
+
+const pickBestMediaUrl = (xml: string, baseUrl: string): string | null => {
+  const candidates = extractMediaCandidates(xml, baseUrl);
+  if (candidates.length > 0) {
+    const best = [...candidates].sort((a, b) => rankMediaCandidate(b) - rankMediaCandidate(a))[0];
+    return best?.url || null;
+  }
+
+  const directMatch = xml.match(/https?:\/\/[^"'\s]+(?:\.mp4|\.m3u8|\.webm)(?:\?[^"'\s]*)?/i)?.[0];
+  return directMatch ? resolveUrl(directMatch, baseUrl) : null;
+};
+
+const extractSkipOffsetSeconds = (xml: string, durationSeconds?: number): number | undefined => {
+  const linearPattern = /<Linear\b([^>]*)>/gi;
+  let linearMatch: RegExpExecArray | null = null;
+
+  while ((linearMatch = linearPattern.exec(xml)) !== null) {
+    const attributes = parseAttributes(linearMatch[1] || "");
+    const rawSkipOffset = attributes.skipoffset;
+    if (!rawSkipOffset) continue;
+
+    const skipOffsetSeconds = parseSkipOffsetSeconds(rawSkipOffset, durationSeconds);
+    if (typeof skipOffsetSeconds === "number" && Number.isFinite(skipOffsetSeconds)) {
+      return skipOffsetSeconds;
+    }
+  }
+
+  return undefined;
+};
+
+const getDirectVastUrlForSlot = (slot: AdSlot): string | null => {
+  const shared = process.env.NEXT_PUBLIC_PLAYER_VAST_URL?.trim();
+  const preroll = process.env.NEXT_PUBLIC_PLAYER_VAST_PREROLL_URL?.trim();
+  const midroll = process.env.NEXT_PUBLIC_PLAYER_VAST_MIDROLL_URL?.trim();
+
+  const resolved = slot === "midroll" ? midroll || shared || preroll : preroll || shared || midroll;
+  return resolved && resolved.length > 0 ? resolved : null;
+};
+
+const parseVastXmlToAd = (
+  slot: AdSlot,
+  xml: string,
+  baseUrl: string,
+): Omit<ActiveVastAd, "slot"> | null => {
+  const mediaUrl = pickBestMediaUrl(xml, baseUrl);
+  if (!mediaUrl) return null;
+
+  const clickThrough = extractTagValues(xml, "ClickThrough")[0];
+  const durationSeconds = parseDurationSeconds(extractTagValues(xml, "Duration")[0]);
+  const skipOffsetSeconds = extractSkipOffsetSeconds(xml, durationSeconds);
+  const impressionUrls = dedupeTrackingUrls(
+    extractTagValues(xml, "Impression")
+      .map((url) => resolveUrl(url, baseUrl))
+      .filter((url) => url.length > 0),
+  );
+  const errorUrls = dedupeTrackingUrls(
+    extractTagValues(xml, "Error")
+      .map((url) => resolveUrl(url, baseUrl))
+      .filter((url) => url.length > 0),
+  );
+  const clickTrackingUrls = dedupeTrackingUrls(
+    extractTagValues(xml, "ClickTracking")
+      .map((url) => resolveUrl(url, baseUrl))
+      .filter((url) => url.length > 0),
+  );
+  const tracking = extractTrackingEvents(xml, baseUrl);
+
+  return {
+    mediaUrl,
+    clickThroughUrl: clickThrough ? resolveUrl(clickThrough, baseUrl) : undefined,
+    durationSeconds,
+    skipOffsetSeconds,
+    impressionUrls,
+    errorUrls,
+    clickTrackingUrls,
+    tracking,
+  };
+};
+
+const resolveVastDirect = async (
+  slot: AdSlot,
+  sourceUrl: string,
+  signal: AbortSignal,
+  depth = 0,
+): Promise<Omit<ActiveVastAd, "slot"> | null> => {
+  if (depth > VAST_MAX_WRAPPER_DEPTH) return null;
+
+  let xml = "";
+  try {
+    const response = await fetch(sourceUrl, {
+      cache: "no-store",
+      redirect: "follow",
+      signal,
+      credentials: "include",
+      headers: {
+        accept: "application/xml,text/xml,text/plain,*/*",
+      },
+    });
+
+    if (!response.ok) return null;
+    xml = await response.text();
+  } catch {
+    return null;
+  }
+
+  if (!xml || !xml.trim()) return null;
+
+  const inline = parseVastXmlToAd(slot, xml, sourceUrl);
+  if (inline) return inline;
+
+  const wrapperTracking = {
+    impressionUrls: dedupeTrackingUrls(
+      extractTagValues(xml, "Impression")
+        .map((url) => resolveUrl(url, sourceUrl))
+        .filter((url) => url.length > 0),
+    ),
+    errorUrls: dedupeTrackingUrls(
+      extractTagValues(xml, "Error")
+        .map((url) => resolveUrl(url, sourceUrl))
+        .filter((url) => url.length > 0),
+    ),
+    clickTrackingUrls: dedupeTrackingUrls(
+      extractTagValues(xml, "ClickTracking")
+        .map((url) => resolveUrl(url, sourceUrl))
+        .filter((url) => url.length > 0),
+    ),
+    tracking: extractTrackingEvents(xml, sourceUrl),
+  };
+
+  const wrapperUrls = extractTagValues(xml, "VASTAdTagURI")
+    .map((url) => resolveUrl(url, sourceUrl))
+    .filter((url) => url.length > 0);
+
+  for (const wrapperUrl of wrapperUrls) {
+    const resolved = await resolveVastDirect(slot, wrapperUrl, signal, depth + 1);
+    if (!resolved) continue;
+
+    return {
+      ...resolved,
+      impressionUrls: dedupeTrackingUrls([
+        ...wrapperTracking.impressionUrls,
+        ...resolved.impressionUrls,
+      ]),
+      errorUrls: dedupeTrackingUrls([...wrapperTracking.errorUrls, ...resolved.errorUrls]),
+      clickTrackingUrls: dedupeTrackingUrls([
+        ...wrapperTracking.clickTrackingUrls,
+        ...resolved.clickTrackingUrls,
+      ]),
+      tracking: mergeTrackingMaps(wrapperTracking.tracking, resolved.tracking),
+    };
+  }
+
+  return null;
+};
+
 const fetchVastAd = async (slot: AdSlot): Promise<ActiveVastAd | null> => {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), VAST_REQUEST_TIMEOUT_MS);
 
   try {
+    const directVastUrl = getDirectVastUrlForSlot(slot);
+    if (directVastUrl) {
+      const directAd = await resolveVastDirect(slot, directVastUrl, controller.signal);
+      if (directAd) {
+        return {
+          slot,
+          ...directAd,
+        };
+      }
+    }
+
     const response = await fetch(`/api/player/vast?slot=${slot}`, {
       cache: "no-store",
       signal: controller.signal,
@@ -386,12 +772,16 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
   const midrollAdRef = useRef<ActiveVastAd | null>(null);
   const hasPrerollPlayedRef = useRef(false);
   const hasMidrollPlayedRef = useRef(false);
+  const isFetchingPrerollRef = useRef(false);
+  const isFetchingMidrollRef = useRef(false);
   const isAdPlayingRef = useRef(false);
   const resumeMainAfterAdRef = useRef(false);
   const resumeContentTimeRef = useRef<number | null>(null);
   const adEventFiredRef = useRef<Record<string, boolean>>({});
   const hasReportedErrorRef = useRef(false);
   const hasAppliedStartAtRef = useRef(false);
+  const streamUrlRef = useRef<string | null>(null);
+  const disableVastAdsRef = useRef(disableVastAds);
 
   const normalizedStartAt = useMemo(
     () => (typeof startAt === "number" && Number.isFinite(startAt) && startAt > 0 ? startAt : 0),
@@ -404,6 +794,14 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
   const canSwitchSources = availableSources.length > 1;
   const activeSource = availableSources[activeSourceIndex];
   const canSkipAd = typeof adSkipRemaining === "number" && adSkipRemaining <= 0;
+
+  useEffect(() => {
+    streamUrlRef.current = streamUrl;
+  }, [streamUrl]);
+
+  useEffect(() => {
+    disableVastAdsRef.current = disableVastAds;
+  }, [disableVastAds]);
 
   useEffect(() => {
     activeAdRef.current = activeAd;
@@ -607,6 +1005,8 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
   useEffect(() => {
     hasPrerollPlayedRef.current = false;
     hasMidrollPlayedRef.current = false;
+    isFetchingPrerollRef.current = false;
+    isFetchingMidrollRef.current = false;
     isAdPlayingRef.current = false;
     resumeMainAfterAdRef.current = false;
     resumeContentTimeRef.current = null;
@@ -615,23 +1015,6 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
     prerollAdRef.current = null;
     midrollAdRef.current = null;
     setActiveAd(null);
-
-    if (!streamUrl || disableVastAds) return;
-
-    let disposed = false;
-
-    const preloadAds = async () => {
-      const [preroll, midroll] = await Promise.all([fetchVastAd("preroll"), fetchVastAd("midroll")]);
-      if (disposed) return;
-
-      prerollAdRef.current = preroll;
-      midrollAdRef.current = midroll;
-    };
-
-    void preloadAds();
-    return () => {
-      disposed = true;
-    };
   }, [disableVastAds, resetAdTrackingState, streamUrl]);
 
   useEffect(() => {
@@ -794,18 +1177,53 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
       if (hasPrerollPlayedRef.current) return false;
       hasPrerollPlayedRef.current = true;
 
-      const ad = prerollAdRef.current;
-      if (!ad) return false;
-
+      const expectedStreamUrl = streamUrl;
+      const currentTime = getPlayerCurrentTime(playerElement);
       pauseMainPlayback(playerElement);
 
-      const currentTime = getPlayerCurrentTime(playerElement);
-      const adStarted = startAdBreak(ad, {
-        resumePlayback: true,
-        resumeTime: currentTime > 0 ? currentTime : 0,
-      });
+      const startPrerollAd = (ad: ActiveVastAd | null) => {
+        if (streamUrlRef.current !== expectedStreamUrl) return;
+        if (disableVastAdsRef.current) {
+          resumeMainPlayback(playerElement);
+          return;
+        }
+        if (!ad) {
+          resumeMainPlayback(playerElement);
+          return;
+        }
 
-      return adStarted;
+        const started = startAdBreak(ad, {
+          resumePlayback: true,
+          resumeTime: currentTime > 0 ? currentTime : 0,
+        });
+        if (!started) {
+          resumeMainPlayback(playerElement);
+        }
+      };
+
+      if (prerollAdRef.current) {
+        startPrerollAd(prerollAdRef.current);
+        return true;
+      }
+
+      if (isFetchingPrerollRef.current) return true;
+      isFetchingPrerollRef.current = true;
+
+      void fetchVastAd("preroll")
+        .then((ad) => {
+          if (streamUrlRef.current !== expectedStreamUrl) return;
+          prerollAdRef.current = ad;
+          startPrerollAd(ad);
+        })
+        .catch(() => {
+          if (streamUrlRef.current !== expectedStreamUrl) return;
+          resumeMainPlayback(playerElement);
+        })
+        .finally(() => {
+          isFetchingPrerollRef.current = false;
+        });
+
+      return true;
     };
 
     const maybeStartMidroll = () => {
@@ -819,17 +1237,53 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
       if (currentTime < duration / 2) return false;
 
       hasMidrollPlayedRef.current = true;
-      const ad = midrollAdRef.current;
-      if (!ad) return false;
+      const expectedStreamUrl = streamUrl;
 
       pauseMainPlayback(playerElement);
 
-      const adStarted = startAdBreak(ad, {
-        resumePlayback: true,
-        resumeTime: currentTime,
-      });
+      const startMidrollAd = (ad: ActiveVastAd | null) => {
+        if (streamUrlRef.current !== expectedStreamUrl) return;
+        if (disableVastAdsRef.current) {
+          resumeMainPlayback(playerElement);
+          return;
+        }
+        if (!ad) {
+          resumeMainPlayback(playerElement);
+          return;
+        }
 
-      return adStarted;
+        const started = startAdBreak(ad, {
+          resumePlayback: true,
+          resumeTime: currentTime,
+        });
+        if (!started) {
+          resumeMainPlayback(playerElement);
+        }
+      };
+
+      if (midrollAdRef.current) {
+        startMidrollAd(midrollAdRef.current);
+        return true;
+      }
+
+      if (isFetchingMidrollRef.current) return true;
+      isFetchingMidrollRef.current = true;
+
+      void fetchVastAd("midroll")
+        .then((ad) => {
+          if (streamUrlRef.current !== expectedStreamUrl) return;
+          midrollAdRef.current = ad;
+          startMidrollAd(ad);
+        })
+        .catch(() => {
+          if (streamUrlRef.current !== expectedStreamUrl) return;
+          resumeMainPlayback(playerElement);
+        })
+        .finally(() => {
+          isFetchingMidrollRef.current = false;
+        });
+
+      return true;
     };
 
     const handlePlay = () => {
@@ -921,6 +1375,7 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
     pauseMainPlayback,
     playerElement,
     reportFatalError,
+    resumeMainPlayback,
     startAdBreak,
     streamUrl,
     switchSource,
