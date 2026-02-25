@@ -10,11 +10,11 @@ const AdNetworkScript: React.FC = () => {
 
   if (isLoading || isPremium) return null;
 
-  //return (
-   // <Script id="bvtpk-tag" strategy="afterInteractive">
-   //   {`(function(s){s.dataset.zone='9408521',s.src='https://bvtpk.com/tag.min.js'})([document.documentElement, document.body].filter(Boolean).pop().appendChild(document.createElement('script')));`}
-  //  </Script>
-//  );
+  return (
+    <Script id="bvtpk-tag" strategy="afterInteractive">
+      {`(function(s){s.dataset.zone='9408521',s.src='https://bvtpk.com/tag.min.js'})([document.documentElement, document.body].filter(Boolean).pop().appendChild(document.createElement('script')));`}
+   </Script>
+  );
 };
 
 export default AdNetworkScript;
