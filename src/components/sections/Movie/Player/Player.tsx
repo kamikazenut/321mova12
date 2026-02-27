@@ -121,7 +121,7 @@ const MoviePlayer: React.FC<MoviePlayerProps> = ({ movie, startAt }) => {
                 disableVastAds={isPremium}
                 startAt={startAt}
                 onFatalError={handlePrimaryPlayerError}
-                className="z-10 h-full"
+                className="absolute inset-0 z-10 h-full w-full"
                 showFloatingSourceButton={false}
                 openSourceMenuSignal={streamSourceMenuSignal}
               />
@@ -130,7 +130,9 @@ const MoviePlayer: React.FC<MoviePlayerProps> = ({ movie, startAt }) => {
                 allowFullScreen
                 key={PLAYER.title}
                 src={PLAYER.source}
-                className={cn("z-10 h-full", { "pointer-events-none": idle && !mobile })}
+                className={cn("absolute inset-0 z-10 h-full w-full", {
+                  "pointer-events-none": idle && !mobile,
+                })}
               />
             )
           )}

@@ -766,7 +766,6 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
   const [activeAd, setActiveAd] = useState<ActiveVastAd | null>(null);
   const [adSkipRemaining, setAdSkipRemaining] = useState<number | null>(null);
 
-  const playerHostRef = useRef<HTMLDivElement | null>(null);
   const adVideoRef = useRef<HTMLVideoElement | null>(null);
   const activeAdRef = useRef<ActiveVastAd | null>(null);
   const prerollAdRef = useRef<ActiveVastAd | null>(null);
@@ -807,32 +806,6 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
   useEffect(() => {
     activeAdRef.current = activeAd;
   }, [activeAd]);
-
-  useEffect(() => {
-    const host = playerHostRef.current;
-    if (!host) return;
-
-    const keepSinglePlayerNode = () => {
-      // Defensive cleanup: if stale custom elements survive re-renders/source switches,
-      // keep only the newest direct media-player so layout never stacks vertically.
-      const playerNodes = Array.from(host.querySelectorAll("media-player.v321-vidstack-player")).filter(
-        (node): node is HTMLElement => node instanceof HTMLElement && node.parentElement === host,
-      );
-      if (playerNodes.length <= 1) return;
-      playerNodes.slice(0, -1).forEach((node) => node.remove());
-    };
-
-    keepSinglePlayerNode();
-
-    const observer = new MutationObserver(() => {
-      keepSinglePlayerNode();
-    });
-    observer.observe(host, { childList: true });
-
-    return () => {
-      observer.disconnect();
-    };
-  }, [isVidstackReady, streamUrl]);
 
   const reportFatalError = useCallback(
     (message: string) => {
@@ -1537,7 +1510,7 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
   }
 
   return (
-    <div ref={playerHostRef} className={cn("relative h-full w-full bg-black", className)}>
+    <div className={cn("relative h-full w-full bg-black", className)}>
       {showFloatingSourceButton && availableSources.length > 0 ? (
         <div className="absolute left-1/2 top-3 z-[72] -translate-x-1/2">
           <button
@@ -1685,8 +1658,7 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
           crossorigin: "anonymous",
           "stream-type": "on-demand",
           "view-type": "video",
-          "data-v321-media-type": mediaType,
-          className: "v321-vidstack-player absolute inset-0 h-full w-full bg-black",
+          className: "v321-vidstack-player h-full w-full bg-black",
         },
         createElement("media-outlet"),
         createElement("media-community-skin"),
