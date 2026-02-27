@@ -158,6 +158,11 @@
   object-position: center center !important;
 }
 
+:where(media-player.v321-vidstack-player[data-v321-media-type="movie"] media-outlet video),
+:where(media-player.v321-vidstack-player[data-v321-media-type="movie"] media-outlet > shadow-root > video) {
+  object-fit: cover !important;
+}
+
 @media (max-width: 640px) {
   :where(media-player.v321-vidstack-player) {
     --media-button-size: 34px;
