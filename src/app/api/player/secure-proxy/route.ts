@@ -3,6 +3,7 @@ import { createPlayerProxyToken, decodePlayerProxyToken, isPlayerProxyTokenEnabl
 
 const TOKEN_PARAM = "token";
 const WORKER_KEY_HEADER = "x-proxy-key";
+const SECURE_PROXY_ROUTE_PATH = "/api/player/secure-proxy";
 const DEFAULT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
 
@@ -45,16 +46,17 @@ const sanitizeUpstreamHeaders = (headers: Headers): Headers => {
 };
 
 const toSecureProxyUrl = (
-  request: NextRequest,
+  _request: NextRequest,
   targetUrl: string,
   expiresAtUnixSeconds: number,
 ): string | null => {
   const token = createPlayerProxyToken(targetUrl, expiresAtUnixSeconds);
   if (!token) return null;
 
-  const nextUrl = new URL("/api/player/secure-proxy", request.nextUrl.origin);
-  nextUrl.searchParams.set(TOKEN_PARAM, token);
-  return nextUrl.toString();
+  const params = new URLSearchParams({
+    [TOKEN_PARAM]: token,
+  });
+  return `${SECURE_PROXY_ROUTE_PATH}?${params.toString()}`;
 };
 
 const rewritePlaylistBody = (
