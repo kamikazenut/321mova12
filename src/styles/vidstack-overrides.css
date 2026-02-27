@@ -135,10 +135,9 @@
 }
 
 :where(media-player.v321-vidstack-player media-outlet) {
-  position: absolute !important;
-  inset: 0 !important;
-  display: block !important;
-  width: 100% !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
   height: 100% !important;
   overflow: hidden !important;
   background: #000 !important;
@@ -155,7 +154,7 @@
   display: block !important;
   width: 100% !important;
   height: 100% !important;
-  object-fit: cover !important;
+  object-fit: contain !important;
   object-position: center center !important;
 }
 
