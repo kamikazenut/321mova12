@@ -67,9 +67,8 @@
   --media-menu-scrollbar-thumb-bg: rgb(125 211 252 / 0.32);
   --media-menu-radio-check-border: 2px solid rgb(220 236 255 / 0.48);
   --media-menu-radio-check-active-color: #33b7ff;
-  background:
-    radial-gradient(120% 120% at 50% -8%, rgb(30 99 255 / 0.22), transparent 58%),
-    linear-gradient(180deg, #01040a 0%, #02060d 100%);
+  background: #000;
+  overflow: hidden;
 }
 
 :where(media-player.v321-vidstack-player media-community-skin[data-video] div[part='controls-group']) {
@@ -136,9 +135,10 @@
 }
 
 :where(media-player.v321-vidstack-player media-outlet) {
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
+  position: absolute !important;
+  inset: 0 !important;
+  display: block !important;
+  width: 100% !important;
   height: 100% !important;
   overflow: hidden !important;
   background: #000 !important;
@@ -155,7 +155,7 @@
   display: block !important;
   width: 100% !important;
   height: 100% !important;
-  object-fit: contain !important;
+  object-fit: cover !important;
   object-position: center center !important;
 }
 
