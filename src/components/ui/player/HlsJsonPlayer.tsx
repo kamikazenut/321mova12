@@ -3,6 +3,7 @@
 import { ContentType } from "@/types";
 import { cn } from "@/utils/helpers";
 import { Close, Server } from "@/utils/icons";
+import { decodePlayerStreamUrl } from "@/utils/playerUrlCodec";
 import { Spinner } from "@heroui/react";
 import { defineCustomElements } from "vidstack/elements";
 import { createElement, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -128,8 +129,13 @@ const pickHlsSources = (payload: PlaylistResponse): StreamSourceOption[] => {
         continue;
       }
 
+      const decodedFile = decodePlayerStreamUrl(source.file);
+      if (!decodedFile || decodedFile.length === 0) {
+        continue;
+      }
+
       collected.push({
-        file: source.file,
+        file: decodedFile,
         label: source.label?.trim() || "Auto",
         provider: source.provider,
         isDefault: Boolean(source.default),

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { encodePlayerStreamUrl } from "@/utils/playerUrlCodec";
 
 const VIXSRC_BASE_URL = "https://vixsrc.to";
 const CINEMAOS_API_BASE_URL = "https://cinemaos.tech/api/neo/resources";
@@ -707,7 +708,12 @@ export const GET = async (request: NextRequest) => {
       return NextResponse.json({ error: "Failed to resolve any playable source" }, { status: 502 });
     }
 
-    return NextResponse.json(toPlaylistPayload(orderedSources), {
+    const encodedSources = orderedSources.map((source) => ({
+      ...source,
+      file: encodePlayerStreamUrl(source.file),
+    }));
+
+    return NextResponse.json(toPlaylistPayload(encodedSources), {
       headers: {
         "cache-control": "no-store, max-age=0",
       },
