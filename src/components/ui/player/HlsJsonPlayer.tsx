@@ -766,6 +766,7 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
   const [activeAd, setActiveAd] = useState<ActiveVastAd | null>(null);
   const [adSkipRemaining, setAdSkipRemaining] = useState<number | null>(null);
 
+  const playerHostRef = useRef<HTMLDivElement | null>(null);
   const adVideoRef = useRef<HTMLVideoElement | null>(null);
   const activeAdRef = useRef<ActiveVastAd | null>(null);
   const prerollAdRef = useRef<ActiveVastAd | null>(null);
@@ -806,6 +807,21 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
   useEffect(() => {
     activeAdRef.current = activeAd;
   }, [activeAd]);
+
+  useEffect(() => {
+    const host = playerHostRef.current;
+    if (!host) return;
+
+    // Defensive cleanup: if a stale custom element survives a source switch,
+    // keep only the newest player so controls don't render twice.
+    const playerNodes = Array.from(host.children).filter(
+      (node): node is HTMLElement =>
+        node instanceof HTMLElement && node.tagName.toLowerCase() === "media-player",
+    );
+    if (playerNodes.length <= 1) return;
+
+    playerNodes.slice(0, -1).forEach((node) => node.remove());
+  }, [isVidstackReady, streamUrl]);
 
   const reportFatalError = useCallback(
     (message: string) => {
@@ -1402,6 +1418,13 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
 
     let castClickHandler: ((event: Event) => void) | null = null;
 
+    const suppressNativeControls = (video: HTMLVideoElement | null): void => {
+      if (!video) return;
+      video.controls = false;
+      video.removeAttribute("controls");
+      video.setAttribute("playsinline", "");
+    };
+
     const hasCastSupport = (video: VideoWithCastSupport | null): boolean =>
       Boolean(
         video &&
@@ -1430,6 +1453,7 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
       }
 
       const video = playerElement.querySelector("video") as VideoWithCastSupport | null;
+      suppressNativeControls(video);
       const existingCastButton = bottomControlsGroup.querySelector(
         "button[data-local-cast-button='true']",
       ) as HTMLButtonElement | null;
@@ -1466,7 +1490,12 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
       syncControlsLayout();
     });
 
-    observer.observe(playerElement, { childList: true, subtree: true });
+    observer.observe(playerElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["controls"],
+    });
 
     return () => {
       observer.disconnect();
@@ -1497,7 +1526,7 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
   }
 
   return (
-    <div className={cn("relative h-full w-full bg-black", className)}>
+    <div ref={playerHostRef} className={cn("relative h-full w-full bg-black", className)}>
       {showFloatingSourceButton && availableSources.length > 0 ? (
         <div className="absolute left-1/2 top-3 z-[72] -translate-x-1/2">
           <button
