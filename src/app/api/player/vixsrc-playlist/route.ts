@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createPlayerProxyToken, isPlayerProxyTokenEnabled } from "@/utils/playerProxyToken";
 
 const VIXSRC_BASE_URL = "https://vixsrc.to";
 const CINEMAOS_API_BASE_URL = "https://cinemaos.tech/api/neo/resources";
@@ -28,6 +29,7 @@ const SECONDARY_REQUEST_TIMEOUT_MS = 6500;
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
 const DEFAULT_WORKER_PROXY = "https://small-cake-fdee.piracya.workers.dev";
+const SECURE_PROXY_ROUTE_PATH = "/api/player/secure-proxy";
 const CINEMAOS_HEADERS = {
   "user-agent": USER_AGENT,
   accept: "application/json, text/plain, */*",
@@ -145,6 +147,19 @@ const getWorkerBaseUrl = () =>
     "",
   );
 
+const buildSecureProxyUrl = (targetUrl: string): string => {
+  if (!isPlayerProxyTokenEnabled()) return targetUrl;
+
+  const token = createPlayerProxyToken(targetUrl);
+  if (!token) return targetUrl;
+
+  const params = new URLSearchParams({
+    token,
+  });
+
+  return `${SECURE_PROXY_ROUTE_PATH}?${params.toString()}`;
+};
+
 const buildWorkerM3u8ProxyUrl = (m3u8Url: string, headers: HeaderMap): string => {
   const workerBase = getWorkerBaseUrl();
   const params = new URLSearchParams({
@@ -153,7 +168,8 @@ const buildWorkerM3u8ProxyUrl = (m3u8Url: string, headers: HeaderMap): string =>
   });
 
   // Keep a .m3u8 suffix in the path so player libraries reliably detect HLS mode.
-  return `${workerBase}/m3u8-proxy/playlist.m3u8?${params.toString()}`;
+  const workerUrl = `${workerBase}/m3u8-proxy/playlist.m3u8?${params.toString()}`;
+  return buildSecureProxyUrl(workerUrl);
 };
 
 const toPlaylistPayload = (sources: PlaylistSource[]): PlaylistResponse => ({

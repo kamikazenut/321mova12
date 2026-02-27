@@ -46,11 +46,6 @@ interface StreamSourceOption {
   isDefault?: boolean;
 }
 
-interface OpukSecureStreamResponse {
-  success?: boolean;
-  secureUrl?: string;
-}
-
 type AdSlot = "preroll" | "midroll";
 type VastTrackingEventKey =
   | "start"
@@ -99,14 +94,6 @@ const ensureVidstackElements = (): Promise<void> => {
   return vidstackElementsPromise;
 };
 
-const DEFAULT_WORKER_PROXY = "https://small-cake-fdee.piracya.workers.dev";
-const OPUK_API_BASE_URL = "https://www.opuk.cc";
-const OPUK_ORIGIN = "https://www.opuk.cc";
-const OPUK_REFERER = "https://www.opuk.cc/";
-const OPUK_USER_AGENT =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
-const OPUK_CITY_LABEL = "Amsterdam";
-const OPUK_CITY_PROVIDER = "amsterdam";
 const VAST_REQUEST_TIMEOUT_MS = 8000;
 const VAST_MAX_WRAPPER_DEPTH = 3;
 const VAST_TRACKING_ERROR_PLAYBACK = 405;
@@ -156,69 +143,6 @@ const pickHlsSources = (payload: PlaylistResponse): StreamSourceOption[] => {
     seen.add(source.file);
     return true;
   });
-};
-
-const getWorkerBaseUrl = (): string =>
-  (process.env.NEXT_PUBLIC_PLAYER_PROXY_URL || DEFAULT_WORKER_PROXY).replace(/\/+$/, "");
-
-const buildWorkerM3u8ProxyUrl = (m3u8Url: string, headers: Record<string, string>): string => {
-  const workerBase = getWorkerBaseUrl();
-  const params = new URLSearchParams({
-    url: m3u8Url,
-    headers: JSON.stringify(headers),
-  });
-
-  return `${workerBase}/m3u8-proxy/playlist.m3u8?${params.toString()}`;
-};
-
-const buildOpukRequestSuffix = (
-  mediaType: ContentType,
-  mediaId: string | number,
-  season?: number,
-  episode?: number,
-): string | null => {
-  if (mediaType === "movie") return String(mediaId);
-  if (!season || !episode) return null;
-  return `${mediaId}-${season}-${episode}`;
-};
-
-const fetchOpukSource = async (
-  mediaType: ContentType,
-  mediaId: string | number,
-  season?: number,
-  episode?: number,
-): Promise<StreamSourceOption | null> => {
-  const suffix = buildOpukRequestSuffix(mediaType, mediaId, season, episode);
-  if (!suffix) return null;
-
-  try {
-    const response = await fetch(`${OPUK_API_BASE_URL}/api/secure-stream/${suffix}/`, {
-      cache: "no-store",
-      headers: {
-        accept: "application/json, text/plain, */*",
-      },
-    });
-
-    if (!response.ok) return null;
-
-    const payload = (await response.json()) as OpukSecureStreamResponse;
-    if (!payload.success || typeof payload.secureUrl !== "string" || payload.secureUrl.length === 0) {
-      return null;
-    }
-
-    return {
-      file: buildWorkerM3u8ProxyUrl(payload.secureUrl, {
-        origin: OPUK_ORIGIN,
-        referer: OPUK_REFERER,
-        "user-agent": OPUK_USER_AGENT,
-      }),
-      label: OPUK_CITY_LABEL,
-      provider: OPUK_CITY_PROVIDER,
-      isDefault: true,
-    };
-  } catch {
-    return null;
-  }
 };
 
 interface PlayerElementLike extends HTMLElement {
@@ -966,11 +890,7 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
 
         const payload = (await response.json()) as PlaylistResponse;
         const parsedSources = pickHlsSources(payload);
-        const hasOpuk = parsedSources.some(
-          (source) => source.provider?.toLowerCase() === OPUK_CITY_PROVIDER,
-        );
-        const opukSource = hasOpuk ? null : await fetchOpukSource(mediaType, mediaId, season, episode);
-        const mergedSources = opukSource ? [opukSource, ...parsedSources] : parsedSources;
+        const mergedSources = parsedSources;
 
         if (!mergedSources.length) {
           throw new Error("No HLS stream found in playlist response");
@@ -994,7 +914,7 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
     return () => {
       disposed = true;
     };
-  }, [episode, mediaId, mediaType, playlistUrl, reportFatalError, season]);
+  }, [playlistUrl, reportFatalError]);
 
   useEffect(() => {
     if (!availableSources.length) return;
