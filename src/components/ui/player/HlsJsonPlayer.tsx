@@ -812,15 +812,26 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
     const host = playerHostRef.current;
     if (!host) return;
 
-    // Defensive cleanup: if a stale custom element survives a source switch,
-    // keep only the newest player so controls don't render twice.
-    const playerNodes = Array.from(host.children).filter(
-      (node): node is HTMLElement =>
-        node instanceof HTMLElement && node.tagName.toLowerCase() === "media-player",
-    );
-    if (playerNodes.length <= 1) return;
+    const keepSinglePlayerNode = () => {
+      // Defensive cleanup: if stale custom elements survive re-renders/source switches,
+      // keep only the newest direct media-player so layout never stacks vertically.
+      const playerNodes = Array.from(host.querySelectorAll("media-player.v321-vidstack-player")).filter(
+        (node): node is HTMLElement => node instanceof HTMLElement && node.parentElement === host,
+      );
+      if (playerNodes.length <= 1) return;
+      playerNodes.slice(0, -1).forEach((node) => node.remove());
+    };
 
-    playerNodes.slice(0, -1).forEach((node) => node.remove());
+    keepSinglePlayerNode();
+
+    const observer = new MutationObserver(() => {
+      keepSinglePlayerNode();
+    });
+    observer.observe(host, { childList: true });
+
+    return () => {
+      observer.disconnect();
+    };
   }, [isVidstackReady, streamUrl]);
 
   const reportFatalError = useCallback(
@@ -1674,7 +1685,7 @@ const HlsJsonPlayer: React.FC<HlsJsonPlayerProps> = ({
           crossorigin: "anonymous",
           "stream-type": "on-demand",
           "view-type": "video",
-          className: "v321-vidstack-player h-full w-full bg-black",
+          className: "v321-vidstack-player absolute inset-0 h-full w-full bg-black",
         },
         createElement("media-outlet"),
         createElement("media-community-skin"),
