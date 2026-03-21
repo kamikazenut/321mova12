@@ -24,37 +24,37 @@ const AdNetworkScript: React.FC = () => {
     cfg = {
       key: "d4dadf4ac0249b48573aa288a24eb9e6",
       opts: [
-        ["siteId", 551 - 506 * 110 + 5178981],
-        ["minBid", 0],
-        ["popundersPerIP", "0"],
-        ["delayBetween", 0],
+        ["siteId", 992 + 163 + 622 - 946 * 106 + 5222371],
+        ["minBid", 0.001],
+        ["popundersPerIP", "5:1,1"],
+        ["delayBetween", 2],
         ["default", false],
         ["defaultPerDay", 0],
         ["topmostLayer", "auto"],
       ],
       assets: [
-        "d3d3LnByZW1pdW12ZXJ0aXNpbmcuY29tL2xib290c3RyYXAtbXVsdGlzZWxlY3QubWluLmNzcw==",
-        "ZDJqMDQyY2oxNDIxd2kuY2xvdWRmcm9udC5uZXQvR3l3cy9qanF1ZXJ5LmlzLm1pbi5qcw==",
+        "d3d3LnByZW1pdW12ZXJ0aXNpbmcuY29tL2Vib290c3RyYXAtbXVsdGlzZWxlY3QubWluLmNzcw==",
+        "ZDJqMDQyY2oxNDIxd2kuY2xvdWRmcm9udC5uZXQvdVhocEgva2pxdWVyeS5pcy5taW4uanM=",
       ],
-      cutoff: 1798028575000,
+      cutoff: 1798149982000,
     };
   } else if (host === "321movies.xyz") {
     cfg = {
       key: "a41ea8eecfa3a247b49e6ef1db583ad5",
       opts: [
-        ["siteId", 274 - 795 - 227 + 543 + 5125279],
+        ["siteId", 609 * 630 - 932 - 398 - 772 + 4743506],
         ["minBid", 0.001],
-        ["popundersPerIP", "2:1,1"],
-        ["delayBetween", 0],
+        ["popundersPerIP", "5:1,1"],
+        ["delayBetween", 1],
         ["default", false],
         ["defaultPerDay", 0],
         ["topmostLayer", "auto"],
       ],
       assets: [
-        "d3d3LnByZW1pdW12ZXJ0aXNpbmcuY29tL29hamF4Lm1pbi5jc3M=",
-        "ZDJqMDQyY2oxNDIxd2kuY2xvdWRmcm9udC5uZXQveFlQL2tqcXVlcnkuamVkaXRhYmxlLm1pbi5qcw==",
+        "d3d3LnByZW1pdW12ZXJ0aXNpbmcuY29tL3lhamF4Lm1pbi5jc3M=",
+        "ZDJqMDQyY2oxNDIxd2kuY2xvdWRmcm9udC5uZXQvZHovcGpxdWVyeS5qZWRpdGFibGUubWluLmpz",
       ],
-      cutoff: 1798117036000,
+      cutoff: 1798150066000,
     };
   }
 
